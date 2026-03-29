@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 
 import { Bot } from "grammy";
-import { ProxyAgent } from "proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 
 import { getChatPolicy, loadSettings } from "./settings.js";
 import {
@@ -29,19 +30,44 @@ const isTelegramMessage = (value: unknown): value is TelegramMessage => {
   );
 };
 
-const withOptionalProxyConfig = (proxy: string) => {
-  if (proxy.trim() === "") {
+const createProxyAgent = (proxy: string) => {
+  const trimmedProxy = proxy.trim();
+  if (trimmedProxy === "") {
     return undefined;
   }
 
-  const proxyAgent = new ProxyAgent({
-    getProxyForUrl: () => proxy
-  });
+  let proxyUrl: URL;
+  try {
+    proxyUrl = new URL(trimmedProxy);
+  } catch {
+    throw new Error("Invalid telegram.proxy URL");
+  }
+
+  const protocol = proxyUrl.protocol;
+
+  if (protocol === "http:" || protocol === "https:") {
+    return new HttpsProxyAgent(trimmedProxy);
+  }
+
+  if (protocol === "socks5:" || protocol === "socks5h:") {
+    const normalizedProxy = protocol === "socks5:" ? `socks5h://${proxyUrl.host}` : trimmedProxy;
+    return new SocksProxyAgent(normalizedProxy);
+  }
+
+  throw new Error(`Unsupported telegram.proxy protocol: ${protocol}`);
+};
+
+const withOptionalProxyConfig = (proxy: string) => {
+  const proxyAgent = createProxyAgent(proxy);
+  if (!proxyAgent) {
+    return undefined;
+  }
 
   return {
     client: {
       baseFetchConfig: {
-        agent: proxyAgent
+        agent: proxyAgent,
+        compress: true
       }
     }
   };

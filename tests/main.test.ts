@@ -34,7 +34,10 @@ const mocks = vi.hoisted(() => {
     Bot: vi.fn(function BotMock() {
       return botInstance;
     }),
-    ProxyAgent: vi.fn(function ProxyAgentMock(options: unknown) {
+    HttpsProxyAgent: vi.fn(function HttpsProxyAgentMock(options: unknown) {
+      return { kind: "https-proxy", options };
+    }),
+    SocksProxyAgent: vi.fn(function SocksProxyAgentMock(options: unknown) {
       return { kind: "proxy", options };
     }),
     loadSettings: vi.fn(),
@@ -46,8 +49,12 @@ vi.mock("grammy", () => ({
   Bot: mocks.Bot
 }));
 
-vi.mock("proxy-agent", () => ({
-  ProxyAgent: mocks.ProxyAgent
+vi.mock("https-proxy-agent", () => ({
+  HttpsProxyAgent: mocks.HttpsProxyAgent
+}));
+
+vi.mock("socks-proxy-agent", () => ({
+  SocksProxyAgent: mocks.SocksProxyAgent
 }));
 
 vi.mock("../src/settings.js", () => ({
@@ -464,7 +471,7 @@ describe("main proxy", () => {
     mocks.botInstance.start.mockResolvedValue(undefined);
   });
 
-  it("proxy: injects proxy-agent via client.baseFetchConfig.agent", async () => {
+  it("proxy: injects https proxy agent via client.baseFetchConfig.agent", async () => {
     const onceSpy = vi.spyOn(process, "once").mockImplementation(() => process);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -472,20 +479,59 @@ describe("main proxy", () => {
       const { startTelegramHost } = await import("../src/main.js");
       await startTelegramHost();
 
-      expect(mocks.ProxyAgent).toHaveBeenCalledWith({
-        getProxyForUrl: expect.any(Function)
-      });
-      const proxyInstance = mocks.ProxyAgent.mock.results[0]?.value;
+      expect(mocks.HttpsProxyAgent).toHaveBeenCalledWith("http://127.0.0.1:7890");
+      const proxyInstance = mocks.HttpsProxyAgent.mock.results[0]?.value;
       const botCall = (mocks.Bot as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
       const botOptions = botCall?.[1] as {
         client?: {
           baseFetchConfig?: {
+            compress?: boolean;
             agent?: unknown;
           };
         };
       } | undefined;
 
       expect(botOptions?.client?.baseFetchConfig?.agent).toBe(proxyInstance);
+      expect(botOptions?.client?.baseFetchConfig?.compress).toBe(true);
+    } finally {
+      onceSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("proxy: normalizes socks5 URLs to remote-DNS socks5h agent", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        telegram: {
+          token: "bot-token",
+          proxy: "socks5://127.0.0.1:7890"
+        },
+        explicit_only: false,
+        allowed_chats: { "1001": {} }
+      })
+    );
+
+    const onceSpy = vi.spyOn(process, "once").mockImplementation(() => process);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const { startTelegramHost } = await import("../src/main.js");
+      await startTelegramHost();
+
+      expect(mocks.SocksProxyAgent).toHaveBeenCalledWith("socks5h://127.0.0.1:7890");
+      const proxyInstance = mocks.SocksProxyAgent.mock.results[0]?.value;
+      const botCall = (mocks.Bot as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+      const botOptions = botCall?.[1] as {
+        client?: {
+          baseFetchConfig?: {
+            compress?: boolean;
+            agent?: unknown;
+          };
+        };
+      } | undefined;
+
+      expect(botOptions?.client?.baseFetchConfig?.agent).toBe(proxyInstance);
+      expect(botOptions?.client?.baseFetchConfig?.compress).toBe(true);
     } finally {
       onceSpy.mockRestore();
       logSpy.mockRestore();
