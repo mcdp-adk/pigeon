@@ -30,6 +30,34 @@ const fail = (path: string, message: string): never => {
   throw new Error(`Invalid settings: ${path} ${message}`);
 };
 
+const parseRequiredString = (value: unknown, path: string): string => {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(path, "must be a non-empty string");
+  }
+
+  return String(value);
+};
+
+const parseOptionalString = (value: unknown, path: string): string => {
+  if (value === undefined) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    fail(path, "must be a string when provided");
+  }
+
+  return String(value);
+};
+
+const parseBoolean = (value: unknown, path: string): boolean => {
+  if (typeof value !== "boolean") {
+    fail(path, "must be a boolean");
+  }
+
+  return value === true;
+};
+
 function assertPlainObject(value: unknown, path: string): asserts value is Record<string, unknown> {
   if (!isPlainObject(value)) {
     fail(path, "must be an object");
@@ -63,21 +91,9 @@ export const loadSettings = async (): Promise<Settings> => {
   const telegramRaw = root.telegram;
   assertPlainObject(telegramRaw, "telegram");
 
-  if (typeof telegramRaw.token !== "string" || telegramRaw.token.trim() === "") {
-    fail("telegram.token", "must be a non-empty string");
-  }
-  const token = telegramRaw.token as string;
-
-  const proxyRaw = telegramRaw.proxy;
-  if (proxyRaw !== undefined && typeof proxyRaw !== "string") {
-    fail("telegram.proxy", "must be a string when provided");
-  }
-  const proxy = (proxyRaw ?? "") as string;
-
-  if (typeof root.explicit_only !== "boolean") {
-    fail("explicit_only", "must be a boolean");
-  }
-  const explicitOnly = root.explicit_only as boolean;
+  const token = parseRequiredString(telegramRaw.token, "telegram.token");
+  const proxy = parseOptionalString(telegramRaw.proxy, "telegram.proxy");
+  const explicitOnly = parseBoolean(root.explicit_only, "explicit_only");
 
   const allowedChatsRaw = root.allowed_chats;
   assertPlainObject(allowedChatsRaw, "allowed_chats");
@@ -100,9 +116,9 @@ export const loadSettings = async (): Promise<Settings> => {
       fail(`allowed_chats[${chatId}].explicit_only`, "must be a boolean");
     }
 
-    if ("explicit_only" in chatConfig) {
+    if (typeof chatConfig.explicit_only === "boolean") {
       allowed_chats[chatId] = {
-        explicit_only: chatConfig.explicit_only as boolean
+        explicit_only: chatConfig.explicit_only
       };
       continue;
     }

@@ -13,6 +13,22 @@ import {
   type TelegramMessage
 } from "./telegram.js";
 
+const isTelegramMessage = (value: unknown): value is TelegramMessage => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const message = value as Partial<TelegramMessage>;
+  return (
+    typeof message.message_id === "number" &&
+    typeof message.date === "number" &&
+    typeof message.chat === "object" &&
+    message.chat !== null &&
+    typeof message.chat.id === "number" &&
+    typeof message.chat.type === "string"
+  );
+};
+
 const withOptionalProxyConfig = (proxy: string) => {
   if (proxy.trim() === "") {
     return undefined;
@@ -44,7 +60,11 @@ export const startTelegramHost = async () => {
   const botName = botInfo.username ?? botInfo.first_name;
 
   bot.on("message", async (ctx) => {
-    const message = ctx.message as unknown as TelegramMessage;
+    if (!isTelegramMessage(ctx.message)) {
+      return;
+    }
+
+    const message = ctx.message;
 
     if (isStartCommand(message)) {
       await ctx.reply(formatStartReply(message, botName));
