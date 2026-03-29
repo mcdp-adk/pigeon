@@ -100,6 +100,22 @@ export interface ShouldHandleMessageOptions extends TriggerBotIdentity {
   allowedChats: Readonly<Record<string, unknown>> | ReadonlySet<string>;
 }
 
+export interface TelegramCommand {
+  commandName: string | undefined;
+  commandArgs: string | undefined;
+}
+
+export const SYSTEM_COMMANDS = [
+  {
+    command: "start",
+    description: "Start Pigeon"
+  },
+  {
+    command: "help",
+    description: "Show available commands"
+  }
+] as const;
+
 export type MessageHandlingDecisionReason =
   | "unauthorized_chat"
   | "non_user_content"
@@ -111,22 +127,6 @@ export interface MessageHandlingDecision {
   shouldHandle: boolean;
   reason: MessageHandlingDecisionReason;
 }
-
-const START_COMMAND = /^\/start(?:@[A-Za-z0-9_]+)?$/i;
-
-const hasEntityCommand = (text: string | undefined, entities: TelegramEntity[] | undefined): boolean => {
-  if (!text || !entities || entities.length === 0) {
-    return false;
-  }
-
-  return entities.some((entity) => {
-    if (entity.type !== "bot_command") {
-      return false;
-    }
-    const commandText = text.slice(entity.offset, entity.offset + entity.length);
-    return START_COMMAND.test(commandText);
-  });
-};
 
 const hasAnyCommandEntity = (entities: TelegramEntity[] | undefined): boolean => {
   if (!entities || entities.length === 0) {
@@ -164,13 +164,6 @@ const isChatAllowed = (
     return allowedChats.has(key);
   }
   return key in allowedChats;
-};
-
-export const isStartCommand = (message: TelegramMessage): boolean => {
-  return (
-    hasEntityCommand(message.text, message.entities) ||
-    hasEntityCommand(message.caption, message.caption_entities)
-  );
 };
 
 export const isUserContentMessage = (message: TelegramMessage): boolean => {
@@ -218,10 +211,6 @@ export const shouldHandleMessage = (
   message: TelegramMessage,
   options: ShouldHandleMessageOptions
 ): boolean => {
-  if (isStartCommand(message)) {
-    return true;
-  }
-
   return getMessageHandlingDecision(message, options).shouldHandle;
 };
 
@@ -330,31 +319,72 @@ const getContentType = (message: TelegramMessage): ExtractedContentType => {
   return "other";
 };
 
-const extractCommand = (
+const extractCommandFromSource = (
   sourceText: string | undefined,
   entities: TelegramEntity[] | undefined
-): { commandName: string | undefined; commandArgs: string | undefined } => {
+): TelegramCommand & { addressedBotUsername: string | undefined } => {
   if (!sourceText || !entities || entities.length === 0) {
-    return { commandName: undefined, commandArgs: undefined };
+    return { commandName: undefined, commandArgs: undefined, addressedBotUsername: undefined };
   }
 
   const commandEntity = entities.find((entity) => entity.type === "bot_command");
   if (!commandEntity) {
-    return { commandName: undefined, commandArgs: undefined };
+    return { commandName: undefined, commandArgs: undefined, addressedBotUsername: undefined };
   }
 
   const rawCommand = sourceText
     .slice(commandEntity.offset, commandEntity.offset + commandEntity.length)
     .trim();
   if (!rawCommand.startsWith("/")) {
-    return { commandName: undefined, commandArgs: undefined };
+    return { commandName: undefined, commandArgs: undefined, addressedBotUsername: undefined };
   }
 
-  const normalizedCommand = rawCommand.slice(1).split("@")[0]?.toLowerCase();
+  const normalizedCommandText = rawCommand.slice(1);
+  const [normalizedCommand, addressedBotUsername] = normalizedCommandText.split("@");
   const argsRaw = sourceText.slice(commandEntity.offset + commandEntity.length).trim();
   return {
     commandName: normalizedCommand || undefined,
-    commandArgs: argsRaw || undefined
+    commandArgs: argsRaw || undefined,
+    addressedBotUsername: addressedBotUsername?.toLowerCase() || undefined
+  };
+};
+
+export const extractCommand = (message: TelegramMessage): TelegramCommand => {
+  const fromTextCommand = extractCommandFromSource(message.text, message.entities);
+  const fromCaptionCommand = extractCommandFromSource(message.caption, message.caption_entities);
+
+  return {
+    commandName: fromTextCommand.commandName ?? fromCaptionCommand.commandName,
+    commandArgs: fromTextCommand.commandArgs ?? fromCaptionCommand.commandArgs
+  };
+};
+
+export const extractCommandForBot = (
+  message: TelegramMessage,
+  botUsername: string | undefined
+): TelegramCommand => {
+  const fromTextCommand = extractCommandFromSource(message.text, message.entities);
+  const fromCaptionCommand = extractCommandFromSource(message.caption, message.caption_entities);
+
+  const command = fromTextCommand.commandName ? fromTextCommand : fromCaptionCommand;
+  if (!command.commandName) {
+    return { commandName: undefined, commandArgs: undefined };
+  }
+
+  if (!command.addressedBotUsername) {
+    return {
+      commandName: command.commandName,
+      commandArgs: command.commandArgs
+    };
+  }
+
+  if (!botUsername || command.addressedBotUsername !== botUsername.toLowerCase()) {
+    return { commandName: undefined, commandArgs: undefined };
+  }
+
+  return {
+    commandName: command.commandName,
+    commandArgs: command.commandArgs
   };
 };
 
@@ -366,10 +396,7 @@ const valueOrNone = (value: string | number | undefined): string => {
 };
 
 export const extractMessageContent = (message: TelegramMessage): ExtractedMessageContent => {
-  const fromTextCommand = extractCommand(message.text, message.entities);
-  const fromCaptionCommand = extractCommand(message.caption, message.caption_entities);
-  const commandName = fromTextCommand.commandName ?? fromCaptionCommand.commandName;
-  const commandArgs = fromTextCommand.commandArgs ?? fromCaptionCommand.commandArgs;
+  const command = extractCommand(message);
 
   return {
     chatId: message.chat.id,
@@ -379,8 +406,8 @@ export const extractMessageContent = (message: TelegramMessage): ExtractedMessag
     messageId: message.message_id,
     contentType: getContentType(message),
     textPreview: toPreview(message.text ?? message.caption),
-    commandName,
-    commandArgs,
+    commandName: command.commandName,
+    commandArgs: command.commandArgs,
     caption: message.caption,
     repliedMessageId: message.reply_to_message?.message_id,
     messageThreadId: message.message_thread_id,
@@ -410,16 +437,19 @@ export const formatDebugReply = (content: ExtractedMessageContent): string => {
 };
 
 export const formatStartReply = (message: TelegramMessage, botName: string): string => {
-  const extracted = extractMessageContent(message);
-  const payload = extracted.commandName === "start" ? extracted.commandArgs : undefined;
-  const chatId = String(message.chat.id);
+  const command = extractCommand(message);
+  const lines = [`Hello from ${botName}.`, "Use /help to see available commands."];
 
+  if (command.commandName === "start" && command.commandArgs) {
+    lines.push(`start_payload=${command.commandArgs}`);
+  }
+
+  return lines.join("\n");
+};
+
+export const formatHelpReply = (botName: string): string => {
   return [
-    `Hello from ${botName}.`,
-    `chat.id=${chatId}`,
-    `chat.type=${message.chat.type}`,
-    "Put this chat id into settings.json:",
-    `"allowed_chats": { "${chatId}": {} }`,
-    `start_payload=${valueOrNone(payload)}`
+    `Available commands for ${botName}:`,
+    ...SYSTEM_COMMANDS.map((command) => `/${command.command} - ${command.description}`)
   ].join("\n");
 };

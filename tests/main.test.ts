@@ -4,8 +4,10 @@ import { spawn } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  SYSTEM_COMMANDS,
   extractMessageContent,
   formatDebugReply,
+  formatHelpReply,
   formatStartReply,
   type TelegramMessage
 } from "../src/telegram.js";
@@ -21,6 +23,9 @@ const mocks = vi.hoisted(() => {
     on: vi.fn(),
     start: vi.fn(async () => undefined),
     stop: vi.fn(),
+    api: {
+      setMyCommands: vi.fn(async () => true)
+    },
     botInfo: {
       id: 777,
       is_bot: true,
@@ -208,6 +213,7 @@ describe("main startup", () => {
     mocks.botInstance.init.mockResolvedValue(undefined);
     mocks.botInstance.on.mockImplementation(() => mocks.botInstance);
     mocks.botInstance.start.mockResolvedValue(undefined);
+    mocks.botInstance.api.setMyCommands.mockResolvedValue(true);
 
     mocks.loadSettings.mockResolvedValue(createSettings());
     mocks.getChatPolicy.mockImplementation(resolveChatPolicy);
@@ -217,6 +223,10 @@ describe("main startup", () => {
     const order: string[] = [];
     mocks.botInstance.init.mockImplementationOnce(async () => {
       order.push("init");
+    });
+    mocks.botInstance.api.setMyCommands.mockImplementationOnce(async () => {
+      order.push("commands");
+      return true;
     });
     mocks.botInstance.on.mockImplementationOnce(() => {
       order.push("on");
@@ -231,7 +241,8 @@ describe("main startup", () => {
       await startTelegramHost();
 
       expect(mocks.Bot).toHaveBeenCalledWith("bot-token", undefined);
-      expect(order).toEqual(["init", "on"]);
+      expect(order).toEqual(["init", "commands", "on"]);
+      expect(mocks.botInstance.api.setMyCommands).toHaveBeenCalledWith([...SYSTEM_COMMANDS]);
       expect(mocks.botInstance.start).toHaveBeenCalledWith({
         allowed_updates: ["message"]
       });
@@ -265,7 +276,7 @@ describe("main startup", () => {
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot"));
       expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Handled /start")
+        expect.stringContaining("Handled command command=start")
       );
     } finally {
       restore();
@@ -284,6 +295,49 @@ describe("main startup", () => {
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot"));
       expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload=ticket-42");
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: /help bypasses gate and returns command help", async () => {
+    const { handler, logSpy, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        chat: { id: 404, type: "private" },
+        text: "/help",
+        entities: [{ type: "bot_command", offset: 0, length: 5 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(formatHelpReply("pigeon_bot"));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Handled command command=help")
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: ignores system commands addressed to another bot", async () => {
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        chat: { id: 404, type: "group" },
+        text: "/help@otherbot",
+        entities: [{ type: "bot_command", offset: 0, length: 14 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(mocks.getChatPolicy).toHaveBeenCalledWith(404, expect.any(Object));
+      expect(ctx.reply).not.toHaveBeenCalled();
     } finally {
       restore();
     }
@@ -634,7 +688,12 @@ describe("main startup smoke", () => {
       const combinedOutput = `${result.stdout}\n${result.stderr}`;
 
       expect(combinedOutput).toContain("Telegram host started");
-      expect([0, 124]).toContain(result.code);
+
+      if (result.code === 1) {
+        expect(combinedOutput).toContain("409: Conflict");
+      } else {
+        expect([0, 124]).toContain(result.code);
+      }
     },
     15000
   );

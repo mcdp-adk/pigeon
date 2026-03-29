@@ -7,11 +7,14 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 import { logError, logInfo } from "./log.js";
 import { getChatPolicy, loadSettings } from "./settings.js";
 import {
+  SYSTEM_COMMANDS,
+  extractCommand,
+  extractCommandForBot,
   extractMessageContent,
   formatDebugReply,
+  formatHelpReply,
   formatStartReply,
   getMessageHandlingDecision,
-  isStartCommand,
   type TelegramMessage
 } from "./telegram.js";
 
@@ -105,6 +108,11 @@ export const startTelegramHost = async () => {
     bot_name: botName
   });
 
+  await bot.api.setMyCommands([...SYSTEM_COMMANDS]);
+  logInfo("Registered Telegram commands", {
+    commands: SYSTEM_COMMANDS.map((command) => command.command).join(",")
+  });
+
   bot.on("message", async (ctx) => {
     if (!isTelegramMessage(ctx.message)) {
       logInfo("Ignored update", {
@@ -114,10 +122,23 @@ export const startTelegramHost = async () => {
     }
 
     const message = ctx.message;
+    const command = extractCommandForBot(message, botInfo.username);
 
-    if (isStartCommand(message)) {
+    if (command.commandName === "start") {
       await ctx.reply(formatStartReply(message, botName));
-      logInfo("Handled /start", {
+      logInfo("Handled command", {
+        command: command.commandName,
+        chat_id: message.chat.id,
+        chat_type: message.chat.type,
+        message_id: message.message_id
+      });
+      return;
+    }
+
+    if (command.commandName === "help") {
+      await ctx.reply(formatHelpReply(botName));
+      logInfo("Handled command", {
+        command: command.commandName,
         chat_id: message.chat.id,
         chat_type: message.chat.type,
         message_id: message.message_id

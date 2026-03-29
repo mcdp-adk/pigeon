@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extractCommand,
+  extractCommandForBot,
   extractMessageContent,
   formatDebugReply,
+  formatHelpReply,
   formatStartReply,
   getMessageHandlingDecision,
   isExplicitTrigger,
-  isStartCommand,
   isUserContentMessage,
   shouldHandleMessage,
   type TelegramMessage
@@ -46,22 +48,56 @@ const mergeMessage = (patch: Partial<TelegramMessage>): TelegramMessage => {
 };
 
 describe("telegram message filters", () => {
-  it("recognizes /start from text entities", () => {
+  it("extracts command and args from text entities", () => {
     const message = mergeMessage({
       text: "/start hello",
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(isStartCommand(message)).toBe(true);
+    expect(extractCommand(message)).toEqual({
+      commandName: "start",
+      commandArgs: "hello"
+    });
   });
 
-  it("recognizes /start from caption_entities", () => {
+  it("extracts command from caption entities", () => {
     const message = mergeMessage({
       caption: "/start via caption",
       caption_entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(isStartCommand(message)).toBe(true);
+    expect(extractCommand(message)).toEqual({
+      commandName: "start",
+      commandArgs: "via caption"
+    });
+  });
+
+  it("matches commands addressed to this bot", () => {
+    const message = mergeMessage({
+      text: "/help@MyBot now",
+      entities: [{ type: "bot_command", offset: 0, length: 11 }]
+    });
+
+    expect(extractCommandForBot(message, "mybot")).toEqual({
+      commandName: "help",
+      commandArgs: "now"
+    });
+  });
+
+  it("ignores commands addressed to a different bot", () => {
+    const message = mergeMessage({
+      text: "/help@otherbot now",
+      entities: [{ type: "bot_command", offset: 0, length: 14 }]
+    });
+
+    expect(extractCommandForBot(message, "mybot")).toEqual({
+      commandName: undefined,
+      commandArgs: undefined
+    });
+    expect(extractCommand(message)).toEqual({
+      commandName: "help",
+      commandArgs: "now"
+    });
   });
 
   it("filters service messages by positive content fields", () => {
@@ -107,23 +143,6 @@ describe("telegram message filters", () => {
     });
 
     expect(isExplicitTrigger(message, { botId: 100, botUsername: "mybot" })).toBe(true);
-  });
-
-  it("allows /start even when chat is unauthorized", () => {
-    const message = mergeMessage({
-      chat: { id: 9999, type: "private" },
-      text: "/start",
-      entities: [{ type: "bot_command", offset: 0, length: 6 }]
-    });
-
-    expect(
-      shouldHandleMessage(message, {
-        allowedChats: { "1001": {} },
-        explicitOnly: true,
-        botId: 100,
-        botUsername: "mybot"
-      })
-    ).toBe(true);
   });
 
   it("skips non-/start when chat is unauthorized", () => {
@@ -355,11 +374,7 @@ describe("start", () => {
     expect(formatStartReply(message, "pigeon-bot")).toBe(
       [
         "Hello from pigeon-bot.",
-        "chat.id=1001",
-        "chat.type=private",
-        "Put this chat id into settings.json:",
-        '"allowed_chats": { "1001": {} }',
-        "start_payload=(none)"
+        "Use /help to see available commands."
       ].join("\n")
     );
   });
@@ -368,7 +383,16 @@ describe("start", () => {
     const message = asMessage(telegramUpdateMessageStartPayload);
 
     expect(formatStartReply(message, "pigeon-bot")).toContain("start_payload=ticket-42");
-    expect(formatStartReply(message, "pigeon-bot")).toContain("chat.id=555");
-    expect(formatStartReply(message, "pigeon-bot")).toContain("chat.type=group");
+    expect(formatStartReply(message, "pigeon-bot")).toContain("Use /help to see available commands.");
+  });
+
+  it("formats /help reply", () => {
+    expect(formatHelpReply("pigeon-bot")).toBe(
+      [
+        "Available commands for pigeon-bot:",
+        "/start - Start Pigeon",
+        "/help - Show available commands"
+      ].join("\n")
+    );
   });
 });
