@@ -1,0 +1,10 @@
+{
+  "telegram": {
+    "token": "YOUR_BOT_TOKEN",
+    "proxy": ""
+  },
+  "explicit_only": true,
+  "allowed_chats": {
+    "CHAT_ID_HERE": {}
+  }
+}
