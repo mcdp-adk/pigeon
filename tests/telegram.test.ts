@@ -393,7 +393,7 @@ describe("start", () => {
         "This chat is not enabled yet.",
         "Ask the operator to add chat.id=2097986184 to settings.json:",
         '"allowed_chats": { "2097986184": {} }',
-        "After that, run /start again or use /help."
+        "After that, send a message or use /help."
       ].join("\n")
     );
   });

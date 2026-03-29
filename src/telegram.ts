@@ -455,7 +455,7 @@ export const formatStartReply = (
       "This chat is not enabled yet.",
       `Ask the operator to add chat.id=${chatId} to settings.json:`,
       `"allowed_chats": { "${chatId}": {} }`,
-      "After that, run /start again or use /help."
+      "After that, send a message or use /help."
     );
   }
 
