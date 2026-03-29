@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "./settings.schema.json",
+  "title": "Pigeon settings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "telegram",
+    "explicit_only",
+    "allowed_chats"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "telegram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Telegram bot token from BotFather"
+        },
+        "proxy": {
+          "type": "string",
+          "description": "Optional HTTP(S) or SOCKS5 proxy URL"
+        }
+      }
+    },
+    "explicit_only": {
+      "type": "boolean",
+      "description": "Require explicit command, mention, or bot reply trigger before handling messages"
+    },
+    "allowed_chats": {
+      "type": "object",
+      "description": "Map of allowed Telegram chat IDs to optional per-chat overrides",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "explicit_only": {
+            "type": "boolean",
+            "description": "Override the global explicit_only setting for this chat"
+          }
+        }
+      },
+      "default": {}
+    }
+  }
+}

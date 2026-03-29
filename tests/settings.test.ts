@@ -51,6 +51,31 @@ describe("settings", () => {
     });
   });
 
+  it("loads settings when top-level $schema is present", async () => {
+    await writeSettingsJson({
+      $schema: "./settings.schema.json",
+      telegram: {
+        token: "bot-token",
+        proxy: ""
+      },
+      explicit_only: true,
+      allowed_chats: {
+        "-1001": {}
+      }
+    });
+
+    await expect(loadSettings()).resolves.toEqual({
+      telegram: {
+        token: "bot-token",
+        proxy: ""
+      },
+      explicit_only: true,
+      allowed_chats: {
+        "-1001": {}
+      }
+    });
+  });
+
   it("throws clear error when settings.json is missing", async () => {
     await expect(loadSettings()).rejects.toThrow(/settings\.json/i);
     await expect(loadSettings()).rejects.toThrow(/not found|missing/i);
