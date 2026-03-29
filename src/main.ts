@@ -4,13 +4,14 @@ import { Bot } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 
+import { logError, logInfo } from "./log.js";
 import { getChatPolicy, loadSettings } from "./settings.js";
 import {
   extractMessageContent,
   formatDebugReply,
   formatStartReply,
+  getMessageHandlingDecision,
   isStartCommand,
-  shouldHandleMessage,
   type TelegramMessage
 } from "./telegram.js";
 
@@ -30,10 +31,10 @@ const isTelegramMessage = (value: unknown): value is TelegramMessage => {
   );
 };
 
-const createProxyAgent = (proxy: string) => {
+const createProxyConfig = (proxy: string): { agent?: HttpsProxyAgent<string> | SocksProxyAgent; label: string } => {
   const trimmedProxy = proxy.trim();
   if (trimmedProxy === "") {
-    return undefined;
+    return { agent: undefined, label: "none" };
   }
 
   let proxyUrl: URL;
@@ -46,19 +47,25 @@ const createProxyAgent = (proxy: string) => {
   const protocol = proxyUrl.protocol;
 
   if (protocol === "http:" || protocol === "https:") {
-    return new HttpsProxyAgent(trimmedProxy);
+    return {
+      agent: new HttpsProxyAgent(trimmedProxy),
+      label: protocol.slice(0, -1)
+    };
   }
 
   if (protocol === "socks5:" || protocol === "socks5h:") {
-    const normalizedProxy = protocol === "socks5:" ? `socks5h://${proxyUrl.host}` : trimmedProxy;
-    return new SocksProxyAgent(normalizedProxy);
+    const normalizedProxy = new URL(trimmedProxy);
+    normalizedProxy.protocol = "socks5h:";
+    return {
+      agent: new SocksProxyAgent(normalizedProxy.toString()),
+      label: "socks5h"
+    };
   }
 
   throw new Error(`Unsupported telegram.proxy protocol: ${protocol}`);
 };
 
-const withOptionalProxyConfig = (proxy: string) => {
-  const proxyAgent = createProxyAgent(proxy);
+const withOptionalProxyConfig = (proxyAgent: HttpsProxyAgent<string> | SocksProxyAgent | undefined) => {
   if (!proxyAgent) {
     return undefined;
   }
@@ -75,7 +82,15 @@ const withOptionalProxyConfig = (proxy: string) => {
 
 export const startTelegramHost = async () => {
   const settings = await loadSettings();
-  const bot = new Bot(settings.telegram.token, withOptionalProxyConfig(settings.telegram.proxy));
+  const proxyConfig = createProxyConfig(settings.telegram.proxy);
+
+  logInfo("Initializing Telegram host", {
+    explicit_only: settings.explicit_only,
+    allowed_chats: Object.keys(settings.allowed_chats).length,
+    proxy: proxyConfig.label
+  });
+
+  const bot = new Bot(settings.telegram.token, withOptionalProxyConfig(proxyConfig.agent));
 
   await bot.init();
   const botInfo = bot.botInfo;
@@ -85,8 +100,16 @@ export const startTelegramHost = async () => {
 
   const botName = botInfo.username ?? botInfo.first_name;
 
+  logInfo("Telegram bot initialized", {
+    bot_id: botInfo.id,
+    bot_name: botName
+  });
+
   bot.on("message", async (ctx) => {
     if (!isTelegramMessage(ctx.message)) {
+      logInfo("Ignored update", {
+        reason: "unsupported_message_shape"
+      });
       return;
     }
 
@@ -94,23 +117,46 @@ export const startTelegramHost = async () => {
 
     if (isStartCommand(message)) {
       await ctx.reply(formatStartReply(message, botName));
+      logInfo("Handled /start", {
+        chat_id: message.chat.id,
+        chat_type: message.chat.type,
+        message_id: message.message_id
+      });
       return;
     }
 
     const chatPolicy = getChatPolicy(message.chat.id, settings);
-    const shouldHandle = shouldHandleMessage(message, {
+    const decision = getMessageHandlingDecision(message, {
       explicitOnly: chatPolicy.explicit_only,
       allowedChats: settings.allowed_chats,
       botId: botInfo.id,
       botUsername: botInfo.username
     });
 
-    if (!shouldHandle) {
+    if (!decision.shouldHandle) {
+      logInfo("Ignored message", {
+        reason: decision.reason,
+        chat_id: message.chat.id,
+        chat_type: message.chat.type,
+        message_id: message.message_id,
+        from_id: message.from?.id,
+        explicit_only: chatPolicy.explicit_only
+      });
       return;
     }
 
     const extracted = extractMessageContent(message);
     await ctx.reply(formatDebugReply(extracted));
+
+    logInfo("Handled message", {
+      reason: decision.reason,
+      chat_id: extracted.chatId,
+      chat_type: extracted.chatType,
+      message_id: extracted.messageId,
+      from_id: extracted.fromId,
+      content_type: extracted.contentType,
+      explicit_only: chatPolicy.explicit_only
+    });
   });
 
   process.once("SIGINT", () => {
@@ -120,7 +166,10 @@ export const startTelegramHost = async () => {
     bot.stop();
   });
 
-  console.log("Telegram host started");
+  logInfo("Telegram host started", {
+    bot_name: botName,
+    allowed_updates: "message"
+  });
   await bot.start({ allowed_updates: ["message"] });
 
   return bot;
@@ -128,7 +177,7 @@ export const startTelegramHost = async () => {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   startTelegramHost().catch((error: unknown) => {
-    console.error("Telegram host failed to start", error);
+    logError("Telegram host failed to start", error);
     process.exitCode = 1;
   });
 }

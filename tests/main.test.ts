@@ -136,6 +136,7 @@ const createContext = (message: TelegramMessage) => {
 const startHostWithHandler = async () => {
   const onceSpy = vi.spyOn(process, "once").mockImplementation(() => process);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   try {
     const { startTelegramHost } = await import("../src/main.js");
@@ -146,14 +147,18 @@ const startHostWithHandler = async () => {
 
     return {
       handler: onCall?.[1] as MessageHandler,
+      logSpy,
+      warnSpy,
       restore: () => {
         onceSpy.mockRestore();
         logSpy.mockRestore();
+        warnSpy.mockRestore();
       }
     };
   } catch (error: unknown) {
     onceSpy.mockRestore();
     logSpy.mockRestore();
+    warnSpy.mockRestore();
     throw error;
   }
 };
@@ -230,6 +235,12 @@ describe("main startup", () => {
       expect(mocks.botInstance.start).toHaveBeenCalledWith({
         allowed_updates: ["message"]
       });
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Initializing Telegram host")
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Telegram host started")
+      );
       expect(onceSpy).toHaveBeenNthCalledWith(1, "SIGINT", expect.any(Function));
       expect(onceSpy).toHaveBeenNthCalledWith(2, "SIGTERM", expect.any(Function));
     } finally {
@@ -239,7 +250,7 @@ describe("main startup", () => {
   });
 
   it("startup: /start bypasses gate even for unauthorized chats", async () => {
-    const { handler, restore } = await startHostWithHandler();
+    const { handler, logSpy, restore } = await startHostWithHandler();
 
     try {
       const message = mergeMessage({
@@ -253,6 +264,9 @@ describe("main startup", () => {
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot"));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Handled /start")
+      );
     } finally {
       restore();
     }
@@ -283,7 +297,7 @@ describe("main startup", () => {
       })
     );
 
-    const { handler, restore } = await startHostWithHandler();
+    const { handler, logSpy, restore } = await startHostWithHandler();
 
     try {
       const message = mergeMessage({
@@ -296,6 +310,9 @@ describe("main startup", () => {
 
       expect(mocks.getChatPolicy).toHaveBeenCalledWith(9999, expect.any(Object));
       expect(ctx.reply).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Ignored message reason=unauthorized_chat")
+      );
     } finally {
       restore();
     }
@@ -309,7 +326,7 @@ describe("main startup", () => {
       })
     );
 
-    const { handler, restore } = await startHostWithHandler();
+    const { handler, logSpy, restore } = await startHostWithHandler();
 
     try {
       const message = mergeMessage({ text: "hello team" });
@@ -319,6 +336,9 @@ describe("main startup", () => {
 
       expect(ctx.reply).toHaveBeenCalledWith(
         formatDebugReply(extractMessageContent(message))
+      );
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Handled message reason=allowed_chat")
       );
     } finally {
       restore();
@@ -407,7 +427,7 @@ describe("main startup", () => {
       })
     );
 
-    const { handler, restore } = await startHostWithHandler();
+    const { handler, logSpy, restore } = await startHostWithHandler();
 
     try {
       const message = mergeMessage({
@@ -418,6 +438,9 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(ctx.reply).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Ignored message reason=non_user_content")
+      );
     } finally {
       restore();
     }
@@ -444,6 +467,24 @@ describe("main startup", () => {
       expect(mocks.getChatPolicy).toHaveBeenCalledWith(1001, expect.any(Object));
       expect(ctx.reply).toHaveBeenCalledWith(
         formatDebugReply(extractMessageContent(message))
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: explicit_only gate logs ignored ordinary messages", async () => {
+    const { handler, logSpy, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({ text: "ordinary text" });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(ctx.reply).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Ignored message reason=explicit_gate")
       );
     } finally {
       restore();

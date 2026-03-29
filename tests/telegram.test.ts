@@ -4,6 +4,7 @@ import {
   extractMessageContent,
   formatDebugReply,
   formatStartReply,
+  getMessageHandlingDecision,
   isExplicitTrigger,
   isStartCommand,
   isUserContentMessage,
@@ -139,6 +140,18 @@ describe("telegram message filters", () => {
         botUsername: "mybot"
       })
     ).toBe(false);
+
+    expect(
+      getMessageHandlingDecision(message, {
+        allowedChats: { "1001": {} },
+        explicitOnly: false,
+        botId: 100,
+        botUsername: "mybot"
+      })
+    ).toEqual({
+      shouldHandle: false,
+      reason: "unauthorized_chat"
+    });
   });
 
   it("enforces explicit_only flow for authorized chats", () => {
@@ -158,6 +171,18 @@ describe("telegram message filters", () => {
     ).toBe(false);
 
     expect(
+      getMessageHandlingDecision(plainMessage, {
+        allowedChats: { "1001": {} },
+        explicitOnly: true,
+        botId: 100,
+        botUsername: "mybot"
+      })
+    ).toEqual({
+      shouldHandle: false,
+      reason: "explicit_gate"
+    });
+
+    expect(
       shouldHandleMessage(mentionMessage, {
         allowedChats: { "1001": {} },
         explicitOnly: true,
@@ -165,6 +190,50 @@ describe("telegram message filters", () => {
         botUsername: "mybot"
       })
     ).toBe(true);
+
+    expect(
+      getMessageHandlingDecision(mentionMessage, {
+        allowedChats: { "1001": {} },
+        explicitOnly: true,
+        botId: 100,
+        botUsername: "mybot"
+      })
+    ).toEqual({
+      shouldHandle: true,
+      reason: "explicit_trigger"
+    });
+  });
+
+  it("explains allowed-chat handling when explicit_only is off", () => {
+    const message = mergeMessage({ text: "hello" });
+
+    expect(
+      getMessageHandlingDecision(message, {
+        allowedChats: { "1001": {} },
+        explicitOnly: false,
+        botId: 100,
+        botUsername: "mybot"
+      })
+    ).toEqual({
+      shouldHandle: true,
+      reason: "allowed_chat"
+    });
+  });
+
+  it("explains non-user-content skips", () => {
+    const message = mergeMessage({ new_chat_members: [{ id: 7, is_bot: false, first_name: "N" }] });
+
+    expect(
+      getMessageHandlingDecision(message, {
+        allowedChats: { "1001": {} },
+        explicitOnly: false,
+        botId: 100,
+        botUsername: "mybot"
+      })
+    ).toEqual({
+      shouldHandle: false,
+      reason: "non_user_content"
+    });
   });
 });
 

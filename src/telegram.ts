@@ -100,6 +100,18 @@ export interface ShouldHandleMessageOptions extends TriggerBotIdentity {
   allowedChats: Readonly<Record<string, unknown>> | ReadonlySet<string>;
 }
 
+export type MessageHandlingDecisionReason =
+  | "unauthorized_chat"
+  | "non_user_content"
+  | "allowed_chat"
+  | "explicit_trigger"
+  | "explicit_gate";
+
+export interface MessageHandlingDecision {
+  shouldHandle: boolean;
+  reason: MessageHandlingDecisionReason;
+}
+
 const START_COMMAND = /^\/start(?:@[A-Za-z0-9_]+)?$/i;
 
 const hasEntityCommand = (text: string | undefined, entities: TelegramEntity[] | undefined): boolean => {
@@ -210,22 +222,50 @@ export const shouldHandleMessage = (
     return true;
   }
 
+  return getMessageHandlingDecision(message, options).shouldHandle;
+};
+
+export const getMessageHandlingDecision = (
+  message: TelegramMessage,
+  options: ShouldHandleMessageOptions
+): MessageHandlingDecision => {
   if (!isChatAllowed(message.chat.id, options.allowedChats)) {
-    return false;
+    return {
+      shouldHandle: false,
+      reason: "unauthorized_chat"
+    };
   }
 
   if (!isUserContentMessage(message)) {
-    return false;
+    return {
+      shouldHandle: false,
+      reason: "non_user_content"
+    };
   }
 
   if (!options.explicitOnly) {
-    return true;
+    return {
+      shouldHandle: true,
+      reason: "allowed_chat"
+    };
   }
 
-  return isExplicitTrigger(message, {
-    botId: options.botId,
-    botUsername: options.botUsername
-  });
+  if (
+    isExplicitTrigger(message, {
+      botId: options.botId,
+      botUsername: options.botUsername
+    })
+  ) {
+    return {
+      shouldHandle: true,
+      reason: "explicit_trigger"
+    };
+  }
+
+  return {
+    shouldHandle: false,
+    reason: "explicit_gate"
+  };
 };
 
 const NONE = "(none)";
