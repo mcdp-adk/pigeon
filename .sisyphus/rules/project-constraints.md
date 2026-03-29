@@ -91,6 +91,10 @@ If something cannot be explained simply, it is probably too early, too complicat
 ## 9. Commits
 
 - Commits must be atomic.
+- Commit messages must use the form `type(scope): subject`.
+- `type` should be one of: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`.
+- `scope` should name the concrete module or area being changed.
+- `subject` should be a concise English imperative phrase.
 - Commit messages must contain a header only.
 - Do not include a body.
 - Do not include a footer.
