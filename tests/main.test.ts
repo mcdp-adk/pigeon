@@ -274,7 +274,7 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot"));
+      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", false));
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=start")
       );
@@ -293,8 +293,27 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot"));
+      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", false));
       expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload=ticket-42");
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: /start shows enabled guidance for authorized chats", async () => {
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        text: "/start",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", true));
     } finally {
       restore();
     }

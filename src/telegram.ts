@@ -155,7 +155,7 @@ const hasMentionForBot = (
   });
 };
 
-const isChatAllowed = (
+export const isChatAllowed = (
   chatId: number,
   allowedChats: Readonly<Record<string, unknown>> | ReadonlySet<string>
 ): boolean => {
@@ -436,9 +436,28 @@ export const formatDebugReply = (content: ExtractedMessageContent): string => {
   ].join("\n");
 };
 
-export const formatStartReply = (message: TelegramMessage, botName: string): string => {
+export const formatStartReply = (
+  message: TelegramMessage,
+  botName: string,
+  isAuthorized: boolean
+): string => {
   const command = extractCommand(message);
-  const lines = [`Hello from ${botName}.`, "Use /help to see available commands."];
+  const lines = [`Hello from ${botName}.`];
+
+  if (isAuthorized) {
+    lines.push(
+      "This chat is enabled.",
+      "Send a message to start, or use /help to see available commands."
+    );
+  } else {
+    const chatId = String(message.chat.id);
+    lines.push(
+      "This chat is not enabled yet.",
+      `Ask the operator to add chat.id=${chatId} to settings.json:`,
+      `"allowed_chats": { "${chatId}": {} }`,
+      "After that, run /start again or use /help."
+    );
+  }
 
   if (command.commandName === "start" && command.commandArgs) {
     lines.push(`start_payload=${command.commandArgs}`);

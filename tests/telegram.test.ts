@@ -371,10 +371,29 @@ describe("start", () => {
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(formatStartReply(message, "pigeon-bot")).toBe(
+    expect(formatStartReply(message, "pigeon-bot", true)).toBe(
       [
         "Hello from pigeon-bot.",
-        "Use /help to see available commands."
+        "This chat is enabled.",
+        "Send a message to start, or use /help to see available commands."
+      ].join("\n")
+    );
+  });
+
+  it("formats /start reply for unauthorized chats", () => {
+    const message = mergeMessage({
+      chat: { id: 2097986184, type: "private" },
+      text: "/start",
+      entities: [{ type: "bot_command", offset: 0, length: 6 }]
+    });
+
+    expect(formatStartReply(message, "pigeon-bot", false)).toBe(
+      [
+        "Hello from pigeon-bot.",
+        "This chat is not enabled yet.",
+        "Ask the operator to add chat.id=2097986184 to settings.json:",
+        '"allowed_chats": { "2097986184": {} }',
+        "After that, run /start again or use /help."
       ].join("\n")
     );
   });
@@ -382,8 +401,8 @@ describe("start", () => {
   it("formats /start reply with payload", () => {
     const message = asMessage(telegramUpdateMessageStartPayload);
 
-    expect(formatStartReply(message, "pigeon-bot")).toContain("start_payload=ticket-42");
-    expect(formatStartReply(message, "pigeon-bot")).toContain("Use /help to see available commands.");
+    expect(formatStartReply(message, "pigeon-bot", false)).toContain("start_payload=ticket-42");
+    expect(formatStartReply(message, "pigeon-bot", false)).toContain("This chat is not enabled yet.");
   });
 
   it("formats /help reply", () => {

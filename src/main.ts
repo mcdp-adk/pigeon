@@ -15,6 +15,7 @@ import {
   formatHelpReply,
   formatStartReply,
   getMessageHandlingDecision,
+  isChatAllowed,
   type TelegramMessage
 } from "./telegram.js";
 
@@ -125,7 +126,8 @@ export const startTelegramHost = async () => {
     const command = extractCommandForBot(message, botInfo.username);
 
     if (command.commandName === "start") {
-      await ctx.reply(formatStartReply(message, botName));
+      const isAuthorized = isChatAllowed(message.chat.id, settings.allowed_chats);
+      await ctx.reply(formatStartReply(message, botName, isAuthorized));
       logInfo("Handled command", {
         command: command.commandName,
         chat_id: message.chat.id,
