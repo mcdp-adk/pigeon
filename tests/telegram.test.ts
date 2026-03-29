@@ -331,15 +331,16 @@ describe("extract", () => {
     ];
 
     for (const [patch, expectedType] of cases) {
-      expect(extractMessageContent(mergeMessage(patch)).contentType).toBe(expectedType);
+    expect(extractMessageContent(mergeMessage(patch)).contentType).toBe(expectedType);
     }
   });
 
   it("formats plain-text debug reply", () => {
     const summary = extractMessageContent(asMessage(telegramUpdateMessageCommandWithArgs));
 
-    expect(formatDebugReply(summary)).toBe(
-      [
+    expect(formatDebugReply(summary)).toEqual({
+      kind: "plain",
+      text: [
         "debug_message",
         "chat.id=1",
         "chat.type=private",
@@ -356,7 +357,7 @@ describe("extract", () => {
         "forward_origin_type=(none)",
         "media_group_id=(none)"
       ].join("\n")
-    );
+    });
   });
 });
 
@@ -371,13 +372,14 @@ describe("start", () => {
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(formatStartReply(message, "pigeon-bot", true)).toBe(
-      [
-        "Hello from pigeon-bot.",
+    expect(formatStartReply(message, "pigeon-bot", true)).toEqual({
+      kind: "html",
+      text: [
+        "<b>Hello from pigeon-bot.</b>",
         "This chat is enabled.",
-        "Send a message to start, or use /help to see available commands."
+        "Send a message to start, or use <code>/help</code> to see available commands."
       ].join("\n")
-    );
+    });
   });
 
   it("formats /start reply for unauthorized chats", () => {
@@ -387,31 +389,48 @@ describe("start", () => {
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(formatStartReply(message, "pigeon-bot", false)).toBe(
-      [
-        "Hello from pigeon-bot.",
+    expect(formatStartReply(message, "pigeon-bot", false)).toEqual({
+      kind: "html",
+      text: [
+        "<b>Hello from pigeon-bot.</b>",
         "This chat is not enabled yet.",
-        "Ask the operator to add chat.id=2097986184 to settings.json:",
-        '"allowed_chats": { "2097986184": {} }',
-        "After that, send a message or use /help."
+        "Ask the operator to add <code>chat.id=2097986184</code> to <code>settings.json</code>:",
+        '<code>"allowed_chats": { "2097986184": {} }</code>',
+        "After that, send a message or use <code>/help</code>."
       ].join("\n")
-    );
+    });
   });
 
   it("formats /start reply with payload", () => {
     const message = asMessage(telegramUpdateMessageStartPayload);
 
-    expect(formatStartReply(message, "pigeon-bot", false)).toContain("start_payload=ticket-42");
-    expect(formatStartReply(message, "pigeon-bot", false)).toContain("This chat is not enabled yet.");
+    const reply = formatStartReply(message, "pigeon-bot", false);
+
+    expect(reply.kind).toBe("html");
+    expect(reply.text).toContain("start_payload=<code>ticket-42</code>");
+    expect(reply.text).toContain("This chat is not enabled yet.");
+  });
+
+  it("escapes user-controlled payload in /start html", () => {
+    const message = mergeMessage({
+      text: "/start <tag>&",
+      entities: [{ type: "bot_command", offset: 0, length: 6 }]
+    });
+
+    const reply = formatStartReply(message, "pigeon-bot", false);
+
+    expect(reply.kind).toBe("html");
+    expect(reply.text).toContain("start_payload=<code>&lt;tag&gt;&amp;</code>");
   });
 
   it("formats /help reply", () => {
-    expect(formatHelpReply("pigeon-bot")).toBe(
-      [
-        "Available commands for pigeon-bot:",
-        "/start - Start Pigeon",
-        "/help - Show available commands"
+    expect(formatHelpReply("pigeon-bot")).toEqual({
+      kind: "html",
+      text: [
+        "<b>Available commands for pigeon-bot:</b>",
+        "<code>/start</code> - Start Pigeon",
+        "<code>/help</code> - Show available commands"
       ].join("\n")
-    );
+    });
   });
 });

@@ -78,7 +78,7 @@ interface TestSettings {
 
 type MessageHandler = (ctx: {
   message: TelegramMessage;
-  reply: (text: string) => Promise<void>;
+  reply: (text: string, options?: { parse_mode?: "HTML" }) => Promise<void>;
 }) => Promise<void>;
 
 const workspaceRoot = process.cwd();
@@ -274,7 +274,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", false));
+      expect(ctx.reply).toHaveBeenCalledWith(
+        formatStartReply(message, "pigeon_bot", false).text,
+        { parse_mode: "HTML" }
+      );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=start")
       );
@@ -293,8 +296,11 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", false));
-      expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload=ticket-42");
+      expect(ctx.reply).toHaveBeenCalledWith(
+        formatStartReply(message, "pigeon_bot", false).text,
+        { parse_mode: "HTML" }
+      );
+      expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload=");
     } finally {
       restore();
     }
@@ -313,7 +319,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatStartReply(message, "pigeon_bot", true));
+      expect(ctx.reply).toHaveBeenCalledWith(
+        formatStartReply(message, "pigeon_bot", true).text,
+        { parse_mode: "HTML" }
+      );
     } finally {
       restore();
     }
@@ -333,7 +342,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(formatHelpReply("pigeon_bot"));
+      expect(ctx.reply).toHaveBeenCalledWith(
+        formatHelpReply("pigeon_bot").text,
+        { parse_mode: "HTML" }
+      );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=help")
       );
@@ -407,9 +419,7 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatDebugReply(extractMessageContent(message))
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled message reason=allowed_chat")
       );
@@ -440,9 +450,7 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatDebugReply(extractMessageContent(message))
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
     } finally {
       restore();
     }
@@ -460,9 +468,7 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatDebugReply(extractMessageContent(message))
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
     } finally {
       restore();
     }
@@ -484,9 +490,7 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatDebugReply(extractMessageContent(message))
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
     } finally {
       restore();
     }
@@ -538,9 +542,7 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).toHaveBeenCalledWith(1001, expect.any(Object));
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatDebugReply(extractMessageContent(message))
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
     } finally {
       restore();
     }

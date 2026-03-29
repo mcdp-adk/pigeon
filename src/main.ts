@@ -8,7 +8,6 @@ import { logError, logInfo } from "./log.js";
 import { getChatPolicy, loadSettings } from "./settings.js";
 import {
   SYSTEM_COMMANDS,
-  extractCommand,
   extractCommandForBot,
   extractMessageContent,
   formatDebugReply,
@@ -16,6 +15,7 @@ import {
   formatStartReply,
   getMessageHandlingDecision,
   isChatAllowed,
+  type TelegramReply,
   type TelegramMessage
 } from "./telegram.js";
 
@@ -84,6 +84,18 @@ const withOptionalProxyConfig = (proxyAgent: HttpsProxyAgent<string> | SocksProx
   };
 };
 
+const sendTelegramReply = async (
+  reply: TelegramReply,
+  send: (text: string, options?: { parse_mode?: "HTML" }) => Promise<unknown>
+) => {
+  if (reply.kind === "html") {
+    await send(reply.text, { parse_mode: "HTML" });
+    return;
+  }
+
+  await send(reply.text);
+};
+
 export const startTelegramHost = async () => {
   const settings = await loadSettings();
   const proxyConfig = createProxyConfig(settings.telegram.proxy);
@@ -127,7 +139,7 @@ export const startTelegramHost = async () => {
 
     if (command.commandName === "start") {
       const isAuthorized = isChatAllowed(message.chat.id, settings.allowed_chats);
-      await ctx.reply(formatStartReply(message, botName, isAuthorized));
+      await sendTelegramReply(formatStartReply(message, botName, isAuthorized), ctx.reply.bind(ctx));
       logInfo("Handled command", {
         command: command.commandName,
         chat_id: message.chat.id,
@@ -138,7 +150,7 @@ export const startTelegramHost = async () => {
     }
 
     if (command.commandName === "help") {
-      await ctx.reply(formatHelpReply(botName));
+      await sendTelegramReply(formatHelpReply(botName), ctx.reply.bind(ctx));
       logInfo("Handled command", {
         command: command.commandName,
         chat_id: message.chat.id,
@@ -169,7 +181,7 @@ export const startTelegramHost = async () => {
     }
 
     const extracted = extractMessageContent(message);
-    await ctx.reply(formatDebugReply(extracted));
+    await sendTelegramReply(formatDebugReply(extracted), ctx.reply.bind(ctx));
 
     logInfo("Handled message", {
       reason: decision.reason,

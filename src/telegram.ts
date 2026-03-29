@@ -105,6 +105,16 @@ export interface TelegramCommand {
   commandArgs: string | undefined;
 }
 
+export type TelegramReply =
+  | {
+      kind: "plain";
+      text: string;
+    }
+  | {
+      kind: "html";
+      text: string;
+    };
+
 export const SYSTEM_COMMANDS = [
   {
     command: "start",
@@ -259,6 +269,25 @@ export const getMessageHandlingDecision = (
 
 const NONE = "(none)";
 const PREVIEW_LIMIT = 200;
+
+const plainReply = (text: string): TelegramReply => {
+  return { kind: "plain", text };
+};
+
+const htmlReply = (text: string): TelegramReply => {
+  return { kind: "html", text };
+};
+
+const escapeHtml = (value: string): string => {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+};
+
+const code = (value: string): string => {
+  return `<code>${escapeHtml(value)}</code>`;
+};
 
 const toPreview = (value: string | undefined): string | undefined => {
   if (!value) {
@@ -416,59 +445,63 @@ export const extractMessageContent = (message: TelegramMessage): ExtractedMessag
   };
 };
 
-export const formatDebugReply = (content: ExtractedMessageContent): string => {
-  return [
-    "debug_message",
-    `chat.id=${valueOrNone(content.chatId)}`,
-    `chat.type=${valueOrNone(content.chatType)}`,
-    `from.id=${valueOrNone(content.fromId)}`,
-    `from.first_name=${valueOrNone(content.fromFirstName)}`,
-    `message_id=${valueOrNone(content.messageId)}`,
-    `content_type=${valueOrNone(content.contentType)}`,
-    `text_preview=${valueOrNone(content.textPreview)}`,
-    `command=${valueOrNone(content.commandName)}`,
-    `command_args=${valueOrNone(content.commandArgs)}`,
-    `caption=${valueOrNone(content.caption)}`,
-    `reply_to_message_id=${valueOrNone(content.repliedMessageId)}`,
-    `message_thread_id=${valueOrNone(content.messageThreadId)}`,
-    `forward_origin_type=${valueOrNone(content.forwardOriginType)}`,
-    `media_group_id=${valueOrNone(content.mediaGroupId)}`
-  ].join("\n");
+export const formatDebugReply = (content: ExtractedMessageContent): TelegramReply => {
+  return plainReply(
+    [
+      "debug_message",
+      `chat.id=${valueOrNone(content.chatId)}`,
+      `chat.type=${valueOrNone(content.chatType)}`,
+      `from.id=${valueOrNone(content.fromId)}`,
+      `from.first_name=${valueOrNone(content.fromFirstName)}`,
+      `message_id=${valueOrNone(content.messageId)}`,
+      `content_type=${valueOrNone(content.contentType)}`,
+      `text_preview=${valueOrNone(content.textPreview)}`,
+      `command=${valueOrNone(content.commandName)}`,
+      `command_args=${valueOrNone(content.commandArgs)}`,
+      `caption=${valueOrNone(content.caption)}`,
+      `reply_to_message_id=${valueOrNone(content.repliedMessageId)}`,
+      `message_thread_id=${valueOrNone(content.messageThreadId)}`,
+      `forward_origin_type=${valueOrNone(content.forwardOriginType)}`,
+      `media_group_id=${valueOrNone(content.mediaGroupId)}`
+    ].join("\n")
+  );
 };
 
 export const formatStartReply = (
   message: TelegramMessage,
   botName: string,
   isAuthorized: boolean
-): string => {
+): TelegramReply => {
   const command = extractCommand(message);
-  const lines = [`Hello from ${botName}.`];
+  const lines = [`<b>Hello from ${escapeHtml(botName)}.</b>`];
 
   if (isAuthorized) {
     lines.push(
       "This chat is enabled.",
-      "Send a message to start, or use /help to see available commands."
+      `Send a message to start, or use ${code("/help")} to see available commands.`
     );
   } else {
     const chatId = String(message.chat.id);
     lines.push(
       "This chat is not enabled yet.",
-      `Ask the operator to add chat.id=${chatId} to settings.json:`,
-      `"allowed_chats": { "${chatId}": {} }`,
-      "After that, send a message or use /help."
+      `Ask the operator to add ${code(`chat.id=${chatId}`)} to ${code("settings.json")}:`,
+      code(`"allowed_chats": { "${chatId}": {} }`),
+      `After that, send a message or use ${code("/help")}.`
     );
   }
 
   if (command.commandName === "start" && command.commandArgs) {
-    lines.push(`start_payload=${command.commandArgs}`);
+    lines.push(`start_payload=${code(command.commandArgs)}`);
   }
 
-  return lines.join("\n");
+  return htmlReply(lines.join("\n"));
 };
 
-export const formatHelpReply = (botName: string): string => {
-  return [
-    `Available commands for ${botName}:`,
-    ...SYSTEM_COMMANDS.map((command) => `/${command.command} - ${command.description}`)
-  ].join("\n");
+export const formatHelpReply = (botName: string): TelegramReply => {
+  return htmlReply(
+    [
+      `<b>Available commands for ${escapeHtml(botName)}:</b>`,
+      ...SYSTEM_COMMANDS.map((command) => `${code(`/${command.command}`)} - ${escapeHtml(command.description)}`)
+    ].join("\n")
+  );
 };
