@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   SYSTEM_COMMANDS,
-  extractMessageContent,
-  formatDebugReply,
   formatHelpReply,
   formatStartReply,
   type TelegramMessage
@@ -46,7 +44,37 @@ const mocks = vi.hoisted(() => {
       return { kind: "proxy", options };
     }),
     loadSettings: vi.fn(),
-    getChatPolicy: vi.fn()
+    getChatPolicy: vi.fn(),
+    runner: {
+      run: vi.fn(),
+      abort: vi.fn()
+    },
+    getOrCreateRunner: vi.fn(),
+    storeInstances: [] as Array<{
+      workingDir: string;
+      getChatDir: ReturnType<typeof vi.fn>;
+    }>,
+    ChatStore: vi.fn(function ChatStoreMock(this: { workingDir: string; getChatDir: ReturnType<typeof vi.fn> }, config: { workingDir: string }) {
+      this.workingDir = config.workingDir;
+      this.getChatDir = vi.fn((chatId: string) => `${config.workingDir}/chat-${chatId}`);
+      mocks.storeInstances.push(this);
+    }),
+    responseContexts: [] as Array<{
+      sendInitial: ReturnType<typeof vi.fn>;
+      updateProgress: ReturnType<typeof vi.fn>;
+      sendFinal: ReturnType<typeof vi.fn>;
+      markStopped: ReturnType<typeof vi.fn>;
+    }>,
+    createResponseContext: vi.fn(() => {
+      const responseContext = {
+        sendInitial: vi.fn(async () => undefined),
+        updateProgress: vi.fn(async () => undefined),
+        sendFinal: vi.fn(async (_text: string) => undefined),
+        markStopped: vi.fn(async () => undefined)
+      };
+      mocks.responseContexts.push(responseContext);
+      return responseContext;
+    })
   };
 });
 
@@ -76,6 +104,22 @@ vi.mock("../src/settings.js", () => ({
   loadSettings: mocks.loadSettings,
   getChatPolicy: mocks.getChatPolicy
 }));
+
+vi.mock("../src/agent.js", () => ({
+  getOrCreateRunner: mocks.getOrCreateRunner
+}));
+
+vi.mock("../src/store.js", () => ({
+  ChatStore: mocks.ChatStore
+}));
+
+vi.mock("../src/telegram.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/telegram.js")>("../src/telegram.js");
+  return {
+    ...actual,
+    createResponseContext: mocks.createResponseContext
+  };
+});
 
 interface TestSettings {
   telegram: {
@@ -148,6 +192,12 @@ const createContext = (message: TelegramMessage) => {
     message,
     reply: vi.fn(async (_text: string) => undefined)
   };
+};
+
+const getLastResponseContext = () => {
+  const responseContext = mocks.responseContexts.at(-1);
+  expect(responseContext).toBeDefined();
+  return responseContext!;
 };
 
 const startHostWithHandler = async () => {
@@ -231,6 +281,11 @@ describe("main startup", () => {
 
     mocks.loadSettings.mockResolvedValue(createSettings());
     mocks.getChatPolicy.mockImplementation(resolveChatPolicy);
+    mocks.runner.run.mockResolvedValue({ stopReason: "stop", reply: "runner reply" });
+    mocks.runner.abort.mockReset();
+    mocks.getOrCreateRunner.mockImplementation(() => mocks.runner);
+    mocks.storeInstances.length = 0;
+    mocks.responseContexts.length = 0;
   });
 
   it("startup: init runs before handler registration and bot.start uses message updates", async () => {
@@ -433,7 +488,21 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("runner reply");
+      expect(mocks.runner.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 1001,
+          ts: "0",
+          userText: "hello team",
+          user: "Test",
+          userName: "Test"
+        }),
+        expect.objectContaining({
+          getChatDir: expect.any(Function)
+        })
+      );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled message reason=allowed_chat")
       );
@@ -464,7 +533,16 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("runner reply");
+      expect(mocks.runner.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: telegramUpdateMessageForwardReplyTopic.message.chat.id,
+          userText: telegramUpdateMessageForwardReplyTopic.message.text
+        }),
+        expect.any(Object)
+      );
     } finally {
       restore();
     }
@@ -482,7 +560,9 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("runner reply");
     } finally {
       restore();
     }
@@ -504,7 +584,15 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(mocks.runner.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userText: telegramUpdateMessagePhotoCaption.message.caption
+        }),
+        expect.any(Object)
+      );
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("runner reply");
     } finally {
       restore();
     }
@@ -556,7 +644,124 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).toHaveBeenCalledWith(1001, expect.any(Object));
-      expect(ctx.reply).toHaveBeenCalledWith(formatDebugReply(extractMessageContent(message)).text);
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("runner reply");
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: unsupported non-text content gets a markdown reply without starting a run", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        explicit_only: false,
+        allowed_chats: { "1001": {} }
+      })
+    );
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        photo: [{}]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith("_目前只支持文字消息。_", {
+        parse_mode: "Markdown"
+      });
+      expect(mocks.createResponseContext).not.toHaveBeenCalled();
+      expect(mocks.runner.run).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: a second message in the same chat gets the busy reply", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        explicit_only: false,
+        allowed_chats: { "1001": {} }
+      })
+    );
+    let resolveRun: (() => void) | undefined;
+    const runPromise = new Promise<{ stopReason: string; reply: string }>((resolve) => {
+      resolveRun = () => resolve({ stopReason: "stop", reply: "runner reply" });
+    });
+    mocks.runner.run.mockImplementation(() => runPromise);
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const firstCtx = createContext(mergeMessage({ text: "first" }));
+      const secondCtx = createContext(mergeMessage({ message_id: 12, text: "second" }));
+
+      const firstRun = handler(firstCtx);
+      await Promise.resolve();
+
+      await handler(secondCtx);
+
+      expect(secondCtx.reply).toHaveBeenCalledWith(
+        "_已在处理上一条消息，请等待或发送 /stop 取消。_",
+        { parse_mode: "Markdown" }
+      );
+      expect(mocks.runner.run).toHaveBeenCalledTimes(1);
+
+      resolveRun?.();
+      await firstRun;
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: accepted text messages stream progress through response context and send final reply", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        explicit_only: false,
+        allowed_chats: { "1001": {} }
+      })
+    );
+    mocks.runner.run.mockImplementation(async (input) => {
+      await input.onEvent?.({
+        type: "tool_execution_start",
+        toolName: "read",
+        toolCallId: "tool-1",
+        args: {}
+      });
+      await input.onEvent?.({
+        type: "tool_execution_end",
+        toolName: "read",
+        toolCallId: "tool-1",
+        isError: false,
+        result: { content: [{ type: "text", text: "ok" }] }
+      });
+      return {
+        stopReason: "stop",
+        reply: "final answer"
+      };
+    });
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const ctx = createContext(mergeMessage({ text: "hello team" }));
+
+      await handler(ctx);
+
+      const responseContext = getLastResponseContext();
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(responseContext.updateProgress).toHaveBeenNthCalledWith(1, "调用工具：read");
+      expect(responseContext.updateProgress).toHaveBeenNthCalledWith(2, "工具完成：read");
+      expect(responseContext.sendFinal).toHaveBeenCalledWith("final answer");
+      expect(mocks.getOrCreateRunner).toHaveBeenCalledWith(
+        expect.any(Object),
+        "1001",
+        `${process.cwd()}/data/chat-1001`
+      );
+      expect(mocks.storeInstances[0]?.workingDir).toBe(`${process.cwd()}/data`);
     } finally {
       restore();
     }
