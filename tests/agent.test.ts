@@ -361,4 +361,91 @@ describe("agent runner", () => {
     expect(result.stopReason).toBe("stop");
     expect(seenMessageEnd).toBe(true);
   });
+
+  it("keeps runner cache bounded", async () => {
+    const { getOrCreateRunner, getRunnerCacheSizeForTests } = await import("../src/agent.js");
+    const settings = createSettings();
+    const maxPlusExtra = 130;
+    let firstRunner: unknown;
+
+    for (let i = 0; i < maxPlusExtra; i += 1) {
+      const chatId = String(1000 + i);
+      const chatDir = join(tmpdir(), "pigeon-cache", `chat-${chatId}`);
+      const runner = getOrCreateRunner(settings, chatId, chatDir);
+      if (i === 0) {
+        firstRunner = runner;
+      }
+    }
+
+    expect(getRunnerCacheSizeForTests()).toBeLessThanOrEqual(100);
+
+    const firstRunnerAgain = getOrCreateRunner(settings, "1000", join(tmpdir(), "pigeon-cache", "chat-1000"));
+    expect(firstRunnerAgain).not.toBe(firstRunner);
+  });
+
+  it("shrinks oversized cache after active runs settle", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-cache-shrink-"));
+    const dataDir = join(sandboxDir, "data");
+    const chatId = "7001";
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+
+    let releaseRun: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      await gate;
+      const assistant = {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        stopReason: "stop"
+      };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    mocks.createAgentSession.mockResolvedValueOnce({
+      session: fake.session,
+      extensionsResult: { extensions: [], errors: [], runtime: {} }
+    });
+
+    const {
+      addSyntheticActiveRunnerForTests,
+      clearRunnerCacheForTests,
+      getOrCreateRunner,
+      getRunnerCacheSizeForTests
+    } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    clearRunnerCacheForTests();
+
+    const syntheticHandles = Array.from({ length: 120 }, (_, i) => {
+      return addSyntheticActiveRunnerForTests(String(9000 + i));
+    });
+    expect(getRunnerCacheSizeForTests()).toBe(120);
+
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const runPromise = runner.run(
+      {
+        chatId: Number(chatId),
+        ts: "1700000005000",
+        user: "u9",
+        userName: "zoe",
+        userText: "shrink"
+      },
+      store
+    );
+
+    for (const handle of syntheticHandles) {
+      handle.deactivate();
+    }
+
+    releaseRun?.();
+    await runPromise;
+
+    expect(getRunnerCacheSizeForTests()).toBeLessThanOrEqual(100);
+  });
 });

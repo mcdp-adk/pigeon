@@ -2,11 +2,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { getModel } from "@mariozechner/pi-ai";
+import { getEnvApiKey, getModel } from "@mariozechner/pi-ai";
 import {
   type AgentSession,
   type AgentSessionEvent,
-  AuthStorage,
   createAgentSession,
   createExtensionRuntime,
   formatSkillsForPrompt,
@@ -60,22 +59,83 @@ interface RunnerRuntime {
   setSystemPrompt(nextPrompt: string): void;
 }
 
-const cachedRunners = new Map<string, AgentRunner>();
+interface RunnerCacheEntry {
+  runner: AgentRunner;
+  isActive: () => boolean;
+}
+
+const MAX_RUNNER_CACHE_SIZE = 100;
+const cachedRunners = new Map<string, RunnerCacheEntry>();
+
+export function getRunnerCacheSizeForTests(): number {
+  return cachedRunners.size;
+}
+
+export function clearRunnerCacheForTests(): void {
+  cachedRunners.clear();
+}
+
+export function addSyntheticActiveRunnerForTests(chatId: string): { deactivate: () => void } {
+  const state = { active: true };
+  const syntheticRunner: AgentRunner = {
+    async run(): Promise<AgentRunResult> {
+      throw new Error("synthetic runner");
+    },
+    abort(): void {
+      return;
+    }
+  };
+
+  cachedRunners.set(String(chatId), {
+    runner: syntheticRunner,
+    isActive: () => state.active
+  });
+
+  return {
+    deactivate: () => {
+      state.active = false;
+    }
+  };
+}
+
+function trimRunnerCache(): void {
+  while (cachedRunners.size > MAX_RUNNER_CACHE_SIZE) {
+    let evicted = false;
+
+    for (const [key, entry] of cachedRunners) {
+      if (entry.isActive()) {
+        continue;
+      }
+
+      cachedRunners.delete(key);
+      evicted = true;
+      break;
+    }
+
+    if (!evicted) {
+      break;
+    }
+  }
+}
 
 export function getOrCreateRunner(settings: Settings, chatId: string, chatDir: string): AgentRunner {
   const cacheKey = String(chatId);
   const existing = cachedRunners.get(cacheKey);
   if (existing) {
-    return existing;
+    cachedRunners.delete(cacheKey);
+    cachedRunners.set(cacheKey, existing);
+    return existing.runner;
   }
 
-  const runner = createRunner(settings, cacheKey, chatDir);
-  cachedRunners.set(cacheKey, runner);
-  return runner;
+  const cacheEntry = createRunner(settings, cacheKey, chatDir);
+  cachedRunners.set(cacheKey, cacheEntry);
+  trimRunnerCache();
+  return cacheEntry.runner;
 }
 
-function createRunner(settings: Settings, chatId: string, chatDir: string): AgentRunner {
+function createRunner(settings: Settings, chatId: string, chatDir: string): RunnerCacheEntry {
   let runtimePromise: Promise<RunnerRuntime> | undefined;
+  let active = false;
 
   const ensureRuntime = async (): Promise<RunnerRuntime> => {
     if (runtimePromise) {
@@ -86,7 +146,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     return runtimePromise;
   };
 
-  return {
+  const runner: AgentRunner = {
     async run(input: TelegramRunInput, store: ChatStore): Promise<AgentRunResult> {
       if (String(input.chatId) !== chatId) {
         throw new Error(`Runner chat mismatch: expected ${chatId}, got ${input.chatId}`);
@@ -102,6 +162,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         onEvent: input.onEvent,
         pendingEventTasks: new Set<Promise<void>>()
       };
+      active = true;
       runtime.activeRun = runState;
 
       try {
@@ -166,6 +227,8 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       } finally {
         runtime.activeRun = null;
         runtime.abortRequested = false;
+        active = false;
+        trimRunnerCache();
       }
     },
 
@@ -180,6 +243,11 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         void runtime.session.abort();
       });
     }
+  };
+
+  return {
+    runner,
+    isActive: () => active
   };
 }
 
@@ -204,8 +272,9 @@ async function createRuntime(settings: Settings, chatId: string, chatDir: string
     throw new Error(`Unsupported model: ${settings.ai.provider}/${settings.ai.model}`);
   }
 
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = new ModelRegistry(authStorage);
+  const modelRegistry = new ModelRegistry(
+    createEnvOnlyAuthBackend() as unknown as ConstructorParameters<typeof ModelRegistry>[0]
+  );
   let systemPrompt = buildSystemPrompt(
     settings,
     chatId,
@@ -228,7 +297,6 @@ async function createRuntime(settings: Settings, chatId: string, chatDir: string
 
   const { session } = await createAgentSession({
     cwd: chatWorkspaceDir,
-    authStorage,
     modelRegistry,
     model,
     thinkingLevel: "off",
@@ -279,6 +347,28 @@ async function createRuntime(settings: Settings, chatId: string, chatDir: string
   });
 
   return runtime;
+}
+
+function createEnvOnlyAuthBackend() {
+  let fallbackResolver: ((provider: string) => string | undefined) | undefined;
+
+  return {
+    setFallbackResolver(resolver: (provider: string) => string | undefined): void {
+      fallbackResolver = resolver;
+    },
+    getOAuthProviders(): [] {
+      return [];
+    },
+    get(_provider: string): undefined {
+      return undefined;
+    },
+    hasAuth(provider: string): boolean {
+      return getEnvApiKey(provider) !== undefined || fallbackResolver?.(provider) !== undefined;
+    },
+    async getApiKey(provider: string): Promise<string | undefined> {
+      return getEnvApiKey(provider) ?? fallbackResolver?.(provider);
+    }
+  };
 }
 
 function openChatSessionManager(contextFile: string, chatDir: string): SessionManager {
