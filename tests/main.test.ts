@@ -423,6 +423,93 @@ describe("main startup", () => {
     }
   });
 
+  it("startup: /stop bypasses gate even for unauthorized chats", async () => {
+    const { handler, logSpy, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        chat: { id: 404, type: "private" },
+        text: "/stop",
+        entities: [{ type: "bot_command", offset: 0, length: 5 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith("_没有正在进行的任务。_", { parse_mode: "Markdown" });
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Handled command command=stop"));
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: /stop replies idle when no run is active", async () => {
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        text: "/stop",
+        entities: [{ type: "bot_command", offset: 0, length: 5 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      expect(mocks.runner.abort).not.toHaveBeenCalled();
+      expect(mocks.createResponseContext).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith("_没有正在进行的任务。_", { parse_mode: "Markdown" });
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: /stop@pigeon_bot stops an active run", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        explicit_only: false,
+        allowed_chats: { "1001": {} }
+      })
+    );
+
+    let resolveRun: (() => void) | undefined;
+    const runPromise = new Promise<{ stopReason: string; reply: string }>((resolve) => {
+      resolveRun = () => resolve({ stopReason: "aborted", reply: "" });
+    });
+    mocks.runner.run.mockImplementation(() => runPromise);
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const firstCtx = createContext(mergeMessage({ text: "first" }));
+      const firstRunPromise = handler(firstCtx);
+      await Promise.resolve();
+
+      const responseContext = getLastResponseContext();
+
+      const stopCtx = createContext(
+        mergeMessage({
+          text: "/stop@pigeon_bot",
+          entities: [{ type: "bot_command", offset: 0, length: 16 }]
+        })
+      );
+
+      await handler(stopCtx);
+
+      expect(mocks.runner.abort).toHaveBeenCalledTimes(1);
+      expect(responseContext.markStopped).toHaveBeenCalled();
+      expect(stopCtx.reply).not.toHaveBeenCalled();
+      expect(responseContext.sendFinal).not.toHaveBeenCalled();
+
+      resolveRun?.();
+      await firstRunPromise;
+
+      expect(responseContext.sendFinal).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it("startup: ignores system commands addressed to another bot", async () => {
     const { handler, restore } = await startHostWithHandler();
 

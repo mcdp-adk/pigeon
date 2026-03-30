@@ -21,6 +21,7 @@ import {
   formatStartReply,
   getMessageHandlingDecision,
   isChatAllowed,
+  type TelegramResponseContext,
   type TelegramReply,
   type TelegramMessage
 } from "./telegram.js";
@@ -107,6 +108,7 @@ interface ChatState {
   stopRequested: boolean;
   runner: AgentRunner;
   store: ChatStore;
+  responseCtx?: TelegramResponseContext;
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");
@@ -130,7 +132,8 @@ const getOrCreateChatState = (chatId: number, settings: Settings): ChatState => 
     running: false,
     stopRequested: false,
     runner: getOrCreateRunner(settings, chatKey, chatDir),
-    store
+    store,
+    responseCtx: undefined
   };
   chatStates.set(chatKey, state);
   return state;
@@ -222,6 +225,36 @@ export const startTelegramHost = async () => {
       return;
     }
 
+    if (command.commandName === "stop") {
+      const state = getOrCreateChatState(message.chat.id, settings);
+      if (!state.running) {
+        await ctx.reply("_没有正在进行的任务。_", { parse_mode: "Markdown" });
+        logInfo("Handled command", {
+          command: command.commandName,
+          chat_id: message.chat.id,
+          chat_type: message.chat.type,
+          message_id: message.message_id,
+          result: "idle"
+        });
+        return;
+      }
+
+      state.stopRequested = true;
+      state.runner.abort();
+
+      if (state.responseCtx) {
+        await state.responseCtx.markStopped();
+      }
+      logInfo("Handled command", {
+        command: command.commandName,
+        chat_id: message.chat.id,
+        chat_type: message.chat.type,
+        message_id: message.message_id,
+        result: "stopped"
+      });
+      return;
+    }
+
     if (command.commandName === "help") {
       await sendTelegramReply(formatHelpReply(botName), ctx.reply.bind(ctx));
       logInfo("Handled command", {
@@ -289,6 +322,7 @@ export const startTelegramHost = async () => {
     const responseCtx = createResponseContext(ctx);
     state.running = true;
     state.stopRequested = false;
+    state.responseCtx = responseCtx;
 
     try {
       await responseCtx.sendInitial();
@@ -335,6 +369,7 @@ export const startTelegramHost = async () => {
     } finally {
       state.running = false;
       state.stopRequested = false;
+      state.responseCtx = undefined;
     }
   });
 

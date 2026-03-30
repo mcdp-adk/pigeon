@@ -429,7 +429,8 @@ describe("start", () => {
       text: [
         "<b>Available commands for pigeon-bot:</b>",
         "<code>/start</code> - Start Pigeon",
-        "<code>/help</code> - Show available commands"
+        "<code>/help</code> - Show available commands",
+        "<code>/stop</code> - Stop the current task"
       ].join("\n")
     });
   });

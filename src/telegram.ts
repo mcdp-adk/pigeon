@@ -124,6 +124,10 @@ export const SYSTEM_COMMANDS = [
   {
     command: "help",
     description: "Show available commands"
+  },
+  {
+    command: "stop",
+    description: "Stop the current task"
   }
 ] as const;
 
