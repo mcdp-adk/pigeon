@@ -98,6 +98,10 @@ const sendTelegramReply = async (
 
 export const startTelegramHost = async () => {
   const settings = await loadSettings();
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!telegramToken || telegramToken.trim() === "") {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
+  }
   const proxyConfig = createProxyConfig(settings.telegram.proxy);
 
   logInfo("Initializing Telegram host", {
@@ -106,7 +110,7 @@ export const startTelegramHost = async () => {
     proxy: proxyConfig.label
   });
 
-  const bot = new Bot(settings.telegram.token, withOptionalProxyConfig(proxyConfig.agent));
+  const bot = new Bot(telegramToken, withOptionalProxyConfig(proxyConfig.agent));
 
   await bot.init();
   const botInfo = bot.botInfo;

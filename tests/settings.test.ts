@@ -8,14 +8,24 @@ import { getChatPolicy, loadSettings } from "../src/settings.js";
 describe("settings", () => {
   let sandboxDir = "";
   const originalCwd = process.cwd();
+  const originalTelegramToken = process.env.TELEGRAM_BOT_TOKEN;
 
   beforeEach(async () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "settings-test-"));
     process.chdir(sandboxDir);
+
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
+
+    if (originalTelegramToken === undefined) {
+      delete process.env.TELEGRAM_BOT_TOKEN;
+    } else {
+      process.env.TELEGRAM_BOT_TOKEN = originalTelegramToken;
+    }
+
     if (sandboxDir) {
       await rm(sandboxDir, { recursive: true, force: true });
     }
@@ -27,10 +37,9 @@ describe("settings", () => {
 
   it("loads valid settings and keeps empty proxy", async () => {
     await writeSettingsJson({
-      telegram: {
-        token: "bot-token",
-        proxy: ""
-      },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {
         "-1001": {},
@@ -40,9 +49,10 @@ describe("settings", () => {
 
     await expect(loadSettings()).resolves.toEqual({
       telegram: {
-        token: "bot-token",
         proxy: ""
       },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {
         "-1001": {},
@@ -54,10 +64,9 @@ describe("settings", () => {
   it("loads settings when top-level $schema is present", async () => {
     await writeSettingsJson({
       $schema: "./settings.schema.json",
-      telegram: {
-        token: "bot-token",
-        proxy: ""
-      },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "docker:default",
       explicit_only: true,
       allowed_chats: {
         "-1001": {}
@@ -66,9 +75,10 @@ describe("settings", () => {
 
     await expect(loadSettings()).resolves.toEqual({
       telegram: {
-        token: "bot-token",
         proxy: ""
       },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "docker:default",
       explicit_only: true,
       allowed_chats: {
         "-1001": {}
@@ -87,19 +97,25 @@ describe("settings", () => {
     await expect(loadSettings()).rejects.toThrow(/invalid json/i);
   });
 
-  it("throws clear error when token is missing", async () => {
+  it("throws clear error when TELEGRAM_BOT_TOKEN env var is missing", async () => {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+
     await writeSettingsJson({
-      telegram: {},
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {}
     });
 
-    await expect(loadSettings()).rejects.toThrow(/telegram\.token/i);
+    await expect(loadSettings()).rejects.toThrow(/TELEGRAM_BOT_TOKEN/i);
   });
 
   it("requires top-level explicit_only to be boolean", async () => {
     await writeSettingsJson({
-      telegram: { token: "bot-token", proxy: "" },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: "true",
       allowed_chats: {}
     });
@@ -110,7 +126,9 @@ describe("settings", () => {
 
   it("requires allowed_chats to be an object", async () => {
     await writeSettingsJson({
-      telegram: { token: "bot-token", proxy: "" },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: []
     });
@@ -121,7 +139,9 @@ describe("settings", () => {
 
   it("rejects invalid per-chat policy payload", async () => {
     await writeSettingsJson({
-      telegram: { token: "bot-token", proxy: "" },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {
         "-1001": { explicit_only: "yes" }
@@ -134,7 +154,9 @@ describe("settings", () => {
 
   it("rejects unknown keys in per-chat policy", async () => {
     await writeSettingsJson({
-      telegram: { token: "bot-token", proxy: "" },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {
         "-1001": { extra: true }
@@ -147,7 +169,9 @@ describe("settings", () => {
 
   it("resolves chat policy with String(chatId), global default and override", () => {
     const settings = {
-      telegram: { token: "bot-token", proxy: "" },
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
       explicit_only: true,
       allowed_chats: {
         "-1001": {},

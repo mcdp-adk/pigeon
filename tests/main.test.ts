@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   SYSTEM_COMMANDS,
@@ -50,6 +50,16 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+const originalTelegramToken = process.env.TELEGRAM_BOT_TOKEN;
+
+afterEach(() => {
+  if (originalTelegramToken === undefined) {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  } else {
+    process.env.TELEGRAM_BOT_TOKEN = originalTelegramToken;
+  }
+});
+
 vi.mock("grammy", () => ({
   Bot: mocks.Bot
 }));
@@ -69,9 +79,10 @@ vi.mock("../src/settings.js", () => ({
 
 interface TestSettings {
   telegram: {
-    token: string;
     proxy: string;
   };
+  ai: { provider: string; model: string };
+  sandbox: string;
   explicit_only: boolean;
   allowed_chats: Record<string, { explicit_only?: boolean }>;
 }
@@ -87,10 +98,11 @@ const settingsJsonPath = `${workspaceRoot}/settings.json`;
 const createSettings = (overrides: Partial<TestSettings> = {}): TestSettings => {
   return {
     telegram: {
-      token: "bot-token",
       proxy: "",
       ...(overrides.telegram ?? {})
     },
+    ai: overrides.ai ?? { provider: "openai", model: "gpt-4o-mini" },
+    sandbox: overrides.sandbox ?? "host",
     explicit_only: overrides.explicit_only ?? true,
     allowed_chats: overrides.allowed_chats ?? { "1001": {} }
   };
@@ -203,6 +215,8 @@ describe("main startup", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
 
     mocks.botInstance.botInfo = {
       id: 777,
@@ -572,10 +586,11 @@ describe("main proxy", () => {
     vi.resetModules();
     vi.clearAllMocks();
 
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+
     mocks.loadSettings.mockResolvedValue(
       createSettings({
         telegram: {
-          token: "bot-token",
           proxy: "http://127.0.0.1:7890"
         },
         explicit_only: false,
@@ -619,7 +634,6 @@ describe("main proxy", () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
         telegram: {
-          token: "bot-token",
           proxy: "socks5://127.0.0.1:7890"
         },
         explicit_only: false,
@@ -659,6 +673,8 @@ describe("main signal", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
 
     mocks.loadSettings.mockResolvedValue(
       createSettings({
@@ -705,6 +721,10 @@ describe("main startup smoke", () => {
   it(
     "startup smoke: npm start boots long enough to print startup log",
     async () => {
+      if (!process.env.TELEGRAM_BOT_TOKEN) {
+        return;
+      }
+
       const result = await runStartupSmoke();
       const combinedOutput = `${result.stdout}\n${result.stderr}`;
 

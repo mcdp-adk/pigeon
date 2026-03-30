@@ -1,11 +1,13 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "./settings.schema.json",
   "title": "Pigeon settings",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "telegram",
+    "ai",
+    "sandbox",
     "explicit_only",
     "allowed_chats"
   ],
@@ -16,20 +18,40 @@
     "telegram": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "token"
-      ],
       "properties": {
-        "token": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Telegram bot token from BotFather"
-        },
         "proxy": {
           "type": "string",
           "description": "Optional HTTP(S) or SOCKS5 proxy URL"
         }
       }
+    },
+    "ai": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "AI provider identifier"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "AI model identifier"
+        }
+      }
+    },
+    "sandbox": {
+      "type": "string",
+      "description": "Either 'host' or a docker target in the form 'docker:<name>'",
+      "oneOf": [
+        { "const": "host" },
+        { "type": "string", "pattern": "^docker:" }
+      ]
     },
     "explicit_only": {
       "type": "boolean",

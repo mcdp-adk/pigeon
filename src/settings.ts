@@ -2,8 +2,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export interface TelegramSettings {
-  token: string;
   proxy: string;
+}
+
+export interface AiSettings {
+  provider: string;
+  model: string;
 }
 
 export interface ChatSettings {
@@ -12,6 +16,8 @@ export interface ChatSettings {
 
 export interface Settings {
   telegram: TelegramSettings;
+  ai: AiSettings;
+  sandbox: string;
   explicit_only: boolean;
   allowed_chats: Record<string, ChatSettings>;
 }
@@ -65,6 +71,11 @@ function assertPlainObject(value: unknown, path: string): asserts value is Recor
 }
 
 export const loadSettings = async (): Promise<Settings> => {
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!telegramToken || telegramToken.trim() === "") {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
+  }
+
   const settingsPath = resolve(process.cwd(), SETTINGS_FILENAME);
 
   let rawContent: string;
@@ -91,8 +102,19 @@ export const loadSettings = async (): Promise<Settings> => {
   const telegramRaw = root.telegram;
   assertPlainObject(telegramRaw, "telegram");
 
-  const token = parseRequiredString(telegramRaw.token, "telegram.token");
   const proxy = parseOptionalString(telegramRaw.proxy, "telegram.proxy");
+
+  const aiRaw = root.ai;
+  assertPlainObject(aiRaw, "ai");
+  const provider = parseRequiredString(aiRaw.provider, "ai.provider");
+  const model = parseRequiredString(aiRaw.model, "ai.model");
+
+  const sandboxRaw = root.sandbox;
+  const sandbox = parseRequiredString(sandboxRaw, "sandbox");
+  if (sandbox !== "host" && !sandbox.startsWith("docker:")) {
+    fail("sandbox", "must be either \"host\" or start with \"docker:\"");
+  }
+
   const explicitOnly = parseBoolean(root.explicit_only, "explicit_only");
 
   const allowedChatsRaw = root.allowed_chats;
@@ -128,9 +150,13 @@ export const loadSettings = async (): Promise<Settings> => {
 
   return {
     telegram: {
-      token,
       proxy
     },
+    ai: {
+      provider,
+      model
+    },
+    sandbox,
     explicit_only: explicitOnly,
     allowed_chats
   };

@@ -1,7 +1,11 @@
 {
   "$schema": "./settings.schema.json",
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  },
+  "sandbox": "host",
   "telegram": {
-    "token": "YOUR_BOT_TOKEN",
     "proxy": ""
   },
   "explicit_only": true,
