@@ -1,3 +1,4 @@
+import type { Context } from "grammy";
 type TelegramEntityType = "bot_command" | "mention" | string;
 
 export interface TelegramEntity {
@@ -504,4 +505,123 @@ export const formatHelpReply = (botName: string): TelegramReply => {
       ...SYSTEM_COMMANDS.map((command) => `${code(`/${command.command}`)} - ${escapeHtml(command.description)}`)
     ].join("\n")
   );
+};
+
+export interface TelegramResponseContext {
+  sendInitial(): Promise<void>;
+  updateProgress(label: string): Promise<void>;
+  sendFinal(text: string): Promise<void>;
+  markStopped(): Promise<void>;
+}
+
+export const createResponseContext = (ctx: Context): TelegramResponseContext => {
+  let messageId: number | undefined;
+  let currentText = "_⏳ 正在处理..._";
+  
+  let lastEditTime = 0;
+  let pendingEditTimeout: NodeJS.Timeout | undefined;
+  let pendingLabel: string | undefined;
+
+  const flushProgress = async () => {
+    if (!messageId || !pendingLabel) return;
+    
+    const labelToAppend = pendingLabel;
+    pendingLabel = undefined;
+    
+    currentText += `\n→ ${labelToAppend}`;
+    lastEditTime = Date.now();
+    
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, messageId, currentText, {
+        parse_mode: "Markdown"
+      });
+    } catch (err) {
+      // Ignore edit errors (e.g., message not modified)
+    }
+  };
+
+  return {
+    async sendInitial() {
+      if (messageId) return;
+      const msg = await ctx.reply(currentText, { parse_mode: "Markdown" });
+      messageId = msg.message_id;
+    },
+    
+    async updateProgress(label: string) {
+      if (!messageId) return;
+      
+      if (pendingLabel) {
+        pendingLabel += `\n→ ${label}`;
+      } else {
+        pendingLabel = label;
+      }
+
+      const now = Date.now();
+      const timeSinceLastEdit = now - lastEditTime;
+      
+      if (timeSinceLastEdit >= 2000) {
+        if (pendingEditTimeout) {
+          clearTimeout(pendingEditTimeout);
+          pendingEditTimeout = undefined;
+        }
+        await flushProgress();
+      } else if (!pendingEditTimeout) {
+        pendingEditTimeout = setTimeout(() => {
+          pendingEditTimeout = undefined;
+          flushProgress().catch(() => {});
+        }, 2000 - timeSinceLastEdit);
+      }
+    },
+    
+    async sendFinal(text: string) {
+      if (pendingEditTimeout) {
+        clearTimeout(pendingEditTimeout);
+        pendingEditTimeout = undefined;
+      }
+      
+      let draftSuccess = false;
+      if (typeof (ctx.api as any).sendMessageDraft === "function") {
+        try {
+          const updateId = ctx.update?.update_id;
+          if (updateId) {
+            await (ctx.api as any).sendMessageDraft(ctx.chat!.id, updateId, text);
+            draftSuccess = true;
+          }
+        } catch (err) {
+          // Fallback
+        }
+      }
+      
+      if (!draftSuccess) {
+        if (messageId) {
+          try {
+            await ctx.api.editMessageText(ctx.chat!.id, messageId, text, {
+              parse_mode: "Markdown"
+            });
+          } catch (err) {
+            await ctx.reply(text, { parse_mode: "Markdown" });
+          }
+        } else {
+          await ctx.reply(text, { parse_mode: "Markdown" });
+        }
+      }
+    },
+    
+    async markStopped() {
+      if (pendingEditTimeout) {
+        clearTimeout(pendingEditTimeout);
+        pendingEditTimeout = undefined;
+      }
+      if (!messageId) return;
+      
+      currentText = "_已停止。_";
+      try {
+        await ctx.api.editMessageText(ctx.chat!.id, messageId, currentText, {
+          parse_mode: "Markdown"
+        });
+      } catch (err) {
+        // Ignore
+      }
+    }
+  };
 };
