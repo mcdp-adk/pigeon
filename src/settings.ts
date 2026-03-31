@@ -10,6 +10,7 @@ export interface TelegramSettings {
 }
 
 export interface AiSettings {
+  proxy: string;
   provider: string;
   model: string;
 }
@@ -114,6 +115,7 @@ export const loadSettings = async (): Promise<Settings> => {
 
   const aiRaw = root.ai;
   assertPlainObject(aiRaw, "ai");
+  const aiProxy = parseOptionalString(aiRaw.proxy, "ai.proxy");
   const provider = parseRequiredString(aiRaw.provider, "ai.provider");
   const model = parseRequiredString(aiRaw.model, "ai.model");
 
@@ -158,6 +160,7 @@ export const loadSettings = async (): Promise<Settings> => {
       allowed_chats
     },
     ai: {
+      proxy: aiProxy,
       provider,
       model
     },

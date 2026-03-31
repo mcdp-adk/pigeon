@@ -35,7 +35,7 @@ describe("settings", () => {
     await writeFile("settings.json", JSON.stringify(value, null, 2), "utf8");
   };
 
-  it("loads valid settings and keeps empty proxy", async () => {
+  it("loads valid settings and keeps empty proxies", async () => {
     await writeSettingsJson({
       telegram: {
         proxy: "",
@@ -45,7 +45,7 @@ describe("settings", () => {
           "-1002": { explicit_only: false }
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -58,7 +58,7 @@ describe("settings", () => {
           "-1002": { explicit_only: false }
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
   });
@@ -73,7 +73,7 @@ describe("settings", () => {
           "-1001": {}
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "docker:default"
     });
 
@@ -85,7 +85,7 @@ describe("settings", () => {
           "-1001": {}
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "docker:default"
     });
   });
@@ -110,7 +110,7 @@ describe("settings", () => {
         explicit_only: true,
         allowed_chats: {}
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -120,11 +120,7 @@ describe("settings", () => {
   it("loads TELEGRAM_BOT_TOKEN from cwd .env when process env is empty", async () => {
     delete process.env.TELEGRAM_BOT_TOKEN;
 
-    await writeFile(
-      ".env",
-      "TELEGRAM_BOT_TOKEN=from-dotenv\n",
-      "utf8"
-    );
+    await writeFile(".env", "TELEGRAM_BOT_TOKEN=from-dotenv\n", "utf8");
 
     await writeSettingsJson({
       telegram: {
@@ -132,7 +128,7 @@ describe("settings", () => {
         explicit_only: true,
         allowed_chats: {}
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -142,10 +138,40 @@ describe("settings", () => {
         explicit_only: true,
         allowed_chats: {}
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
     expect(process.env.TELEGRAM_BOT_TOKEN).toBe("from-dotenv");
+  });
+
+  it("keeps ai.proxy when configured", async () => {
+    await writeSettingsJson({
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {}
+      },
+      ai: {
+        proxy: "socks5://127.0.0.1:7890",
+        provider: "openrouter",
+        model: "openai/gpt-5.4-mini"
+      },
+      sandbox: "host"
+    });
+
+    await expect(loadSettings()).resolves.toEqual({
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {}
+      },
+      ai: {
+        proxy: "socks5://127.0.0.1:7890",
+        provider: "openrouter",
+        model: "openai/gpt-5.4-mini"
+      },
+      sandbox: "host"
+    });
   });
 
   it("requires telegram.explicit_only to be boolean", async () => {
@@ -155,7 +181,7 @@ describe("settings", () => {
         explicit_only: "true",
         allowed_chats: {}
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -170,7 +196,7 @@ describe("settings", () => {
         explicit_only: true,
         allowed_chats: []
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -187,7 +213,7 @@ describe("settings", () => {
           "-1001": { explicit_only: "yes" }
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -204,7 +230,7 @@ describe("settings", () => {
           "-1001": { extra: true }
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     });
 
@@ -222,7 +248,7 @@ describe("settings", () => {
           "-1002": { explicit_only: false }
         }
       },
-      ai: { provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
       sandbox: "host"
     };
 
