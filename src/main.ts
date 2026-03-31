@@ -2,13 +2,11 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 
-import { getOrCreateRunner, type AgentRunner } from "./agent.js";
+import { getOrCreateRunner, type AgentRunner, type AgentRunEvent } from "./agent.js";
 import { logError, logInfo } from "./log.js";
 import { getChatPolicy, loadSettings, type Settings } from "./settings.js";
 import { ChatStore } from "./store.js";
@@ -112,12 +110,18 @@ interface ChatState {
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");
-const BUSY_REPLY = "_已在处理上一条消息，请等待或发送 /stop 取消。_";
-const UNSUPPORTED_TEXT_REPLY = "_目前只支持文字消息。_";
-const RUN_FAILED_REPLY = "_处理失败，请稍后重试。_";
-const EMPTY_REPLY = "_未返回文本结果。_";
+const BUSY_REPLY = "<i>已在处理上一条消息，请等待或发送 /stop 取消。</i>";
+const UNSUPPORTED_TEXT_REPLY = "<i>目前只支持文字消息。</i>";
+const RUN_FAILED_REPLY = "<i>处理失败，请稍后重试。</i>";
+const EMPTY_REPLY = "<i>未返回文本结果。</i>";
 
 const chatStates = new Map<string, ChatState>();
+
+type SystemCommandName = (typeof SYSTEM_COMMANDS)[number]["command"];
+
+const isSystemCommandName = (value: string | undefined): value is SystemCommandName => {
+  return SYSTEM_COMMANDS.some((command) => command.command === value);
+};
 
 const getOrCreateChatState = (chatId: number, settings: Settings): ChatState => {
   const chatKey = String(chatId);
@@ -155,15 +159,77 @@ const getUserName = (message: TelegramMessage): string | undefined => {
   return message.from?.first_name ?? message.from?.username;
 };
 
-const getToolProgressLabel = (event: AgentSessionEvent): string | undefined => {
-  if (event.type === "tool_execution_start") {
-    return `调用工具：${event.toolName}`;
+async function dispatchSystemCommand(params: {
+  commandName: string | undefined;
+  message: TelegramMessage;
+  ctx: Context;
+  botName: string;
+  settings: Settings;
+}): Promise<boolean> {
+  const { commandName, message, ctx, botName, settings } = params;
+  if (!isSystemCommandName(commandName)) {
+    return false;
   }
 
-  if (event.type === "tool_execution_end") {
-    return event.isError ? `工具失败：${event.toolName}` : `工具完成：${event.toolName}`;
+  if (commandName === "start") {
+    const isAuthorized = isChatAllowed(message.chat.id, settings.telegram.allowed_chats);
+    await sendTelegramReply(formatStartReply(message, botName, isAuthorized), ctx.reply.bind(ctx));
+    logInfo("Handled command", {
+      command: commandName,
+      chat_id: message.chat.id,
+      chat_type: message.chat.type,
+      message_id: message.message_id
+    });
+    return true;
   }
 
+  if (commandName === "stop") {
+    const state = getOrCreateChatState(message.chat.id, settings);
+    if (!state.running) {
+      await ctx.reply("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      logInfo("Handled command", {
+        command: commandName,
+        chat_id: message.chat.id,
+        chat_type: message.chat.type,
+        message_id: message.message_id,
+        result: "idle"
+      });
+      return true;
+    }
+
+    state.stopRequested = true;
+    state.runner.abort();
+
+    if (state.responseCtx) {
+      await state.responseCtx.markStopped();
+    }
+    logInfo("Handled command", {
+      command: commandName,
+      chat_id: message.chat.id,
+      chat_type: message.chat.type,
+      message_id: message.message_id,
+      result: "stopped"
+    });
+    return true;
+  }
+
+  await sendTelegramReply(formatHelpReply(botName), ctx.reply.bind(ctx));
+  logInfo("Handled command", {
+    command: commandName,
+    chat_id: message.chat.id,
+    chat_type: message.chat.type,
+    message_id: message.message_id
+  });
+  return true;
+}
+
+const getToolProgressLabel = (event: AgentRunEvent): string | undefined => {
+  if (event.type === "tool_start") {
+    return `调用工具：${event.label}`;
+  }
+  if (event.type === "tool_end") {
+    return event.isError ? `工具失败：${event.label}` : `工具完成：${event.label}`;
+  }
   return undefined;
 };
 
@@ -183,6 +249,7 @@ export const startTelegramHost = async () => {
 
   mkdirSync(DATA_DIR, { recursive: true });
   const bot = new Bot(telegramToken, withOptionalProxyConfig(proxyConfig.agent));
+  const activeRuns = new Set<Promise<void>>();
 
   await bot.init();
   const botInfo = bot.botInfo;
@@ -213,56 +280,7 @@ export const startTelegramHost = async () => {
     const message = ctx.message;
     const command = extractCommandForBot(message, botInfo.username);
 
-    if (command.commandName === "start") {
-      const isAuthorized = isChatAllowed(message.chat.id, settings.telegram.allowed_chats);
-      await sendTelegramReply(formatStartReply(message, botName, isAuthorized), ctx.reply.bind(ctx));
-      logInfo("Handled command", {
-        command: command.commandName,
-        chat_id: message.chat.id,
-        chat_type: message.chat.type,
-        message_id: message.message_id
-      });
-      return;
-    }
-
-    if (command.commandName === "stop") {
-      const state = getOrCreateChatState(message.chat.id, settings);
-      if (!state.running) {
-        await ctx.reply("_没有正在进行的任务。_", { parse_mode: "Markdown" });
-        logInfo("Handled command", {
-          command: command.commandName,
-          chat_id: message.chat.id,
-          chat_type: message.chat.type,
-          message_id: message.message_id,
-          result: "idle"
-        });
-        return;
-      }
-
-      state.stopRequested = true;
-      state.runner.abort();
-
-      if (state.responseCtx) {
-        await state.responseCtx.markStopped();
-      }
-      logInfo("Handled command", {
-        command: command.commandName,
-        chat_id: message.chat.id,
-        chat_type: message.chat.type,
-        message_id: message.message_id,
-        result: "stopped"
-      });
-      return;
-    }
-
-    if (command.commandName === "help") {
-      await sendTelegramReply(formatHelpReply(botName), ctx.reply.bind(ctx));
-      logInfo("Handled command", {
-        command: command.commandName,
-        chat_id: message.chat.id,
-        chat_type: message.chat.type,
-        message_id: message.message_id
-      });
+    if (await dispatchSystemCommand({ commandName: command.commandName, message, ctx, botName, settings })) {
       return;
     }
 
@@ -289,7 +307,7 @@ export const startTelegramHost = async () => {
     const extracted = extractMessageContent(message);
     const userText = getMessageText(message);
     if (!userText) {
-      await ctx.reply(UNSUPPORTED_TEXT_REPLY, { parse_mode: "Markdown" });
+      await ctx.reply(UNSUPPORTED_TEXT_REPLY, { parse_mode: "HTML" });
       logInfo("Handled message", {
         reason: decision.reason,
         chat_id: extracted.chatId,
@@ -305,7 +323,7 @@ export const startTelegramHost = async () => {
 
     const state = getOrCreateChatState(message.chat.id, settings);
     if (state.running) {
-      await ctx.reply(BUSY_REPLY, { parse_mode: "Markdown" });
+      await ctx.reply(BUSY_REPLY, { parse_mode: "HTML" });
       logInfo("Handled message", {
         reason: decision.reason,
         chat_id: extracted.chatId,
@@ -324,61 +342,78 @@ export const startTelegramHost = async () => {
     state.stopRequested = false;
     state.responseCtx = responseCtx;
 
-    try {
-      await responseCtx.sendInitial();
-
-      const result = await state.runner.run(
-        {
-          chatId: message.chat.id,
-          userText,
-          ts: getMessageTimestamp(message),
-          user: getUserHandle(message),
-          userName: getUserName(message),
-          onEvent: async (event) => {
-            const label = getToolProgressLabel(event);
-            if (!label) {
-              return;
-            }
-
-            await responseCtx.updateProgress(label);
-          }
-        },
-        state.store
-      );
-
-      if (result.stopReason === "aborted" || state.stopRequested) {
-        await responseCtx.markStopped();
-      } else {
-        const finalText = result.reply.trim() !== "" ? result.reply : result.stopReason === "error" ? RUN_FAILED_REPLY : EMPTY_REPLY;
-        await responseCtx.sendFinal(finalText);
+    const runInput = {
+      chatId: message.chat.id,
+      userText,
+      ts: getMessageTimestamp(message),
+      user: getUserHandle(message),
+      userName: getUserName(message),
+      onEvent: async (event: AgentRunEvent) => {
+        if (event.type === "text_delta") {
+          await responseCtx.appendDelta(event.delta);
+          return;
+        }
+        const label = getToolProgressLabel(event);
+        if (label) {
+          await responseCtx.updateProgress(label);
+        }
       }
+    };
 
-      logInfo("Handled message", {
-        reason: decision.reason,
-        chat_id: extracted.chatId,
-        chat_type: extracted.chatType,
-        message_id: extracted.messageId,
-        from_id: extracted.fromId,
-        content_type: extracted.contentType,
-        explicit_only: chatPolicy.explicit_only,
-        stop_reason: result.stopReason
-      });
-    } catch (error: unknown) {
-      logError("Failed to handle Telegram message", error);
-      await responseCtx.sendFinal(RUN_FAILED_REPLY);
-    } finally {
-      state.running = false;
-      state.stopRequested = false;
-      state.responseCtx = undefined;
+    const logMeta = {
+      reason: decision.reason,
+      chat_id: extracted.chatId,
+      chat_type: extracted.chatType,
+      message_id: extracted.messageId,
+      from_id: extracted.fromId,
+      content_type: extracted.contentType,
+      explicit_only: chatPolicy.explicit_only,
+    };
+
+    let runPromise!: Promise<void>;
+    runPromise = (async () => {
+      try {
+        await responseCtx.sendInitial();
+
+        const result = await state.runner.run(runInput, state.store);
+
+        if (result.stopReason === "aborted" || state.stopRequested) {
+          await responseCtx.markStopped();
+        } else {
+          const finalText = result.reply.trim() !== "" ? result.reply : result.stopReason === "error" ? RUN_FAILED_REPLY : EMPTY_REPLY;
+          await responseCtx.sendFinal(finalText);
+        }
+
+        logInfo("Handled message", { ...logMeta, stop_reason: result.stopReason });
+      } catch (error: unknown) {
+        logError("Failed to handle Telegram message", error);
+        await responseCtx.sendFinal(RUN_FAILED_REPLY);
+      } finally {
+        state.running = false;
+        state.stopRequested = false;
+        state.responseCtx = undefined;
+        activeRuns.delete(runPromise);
+      }
+    })();
+
+    activeRuns.add(runPromise);
+  });
+
+  const shutdown = async () => {
+    bot.stop();
+    for (const [, state] of chatStates) {
+      if (state.running) {
+        state.runner.abort();
+      }
     }
-  });
+    await Promise.race([
+      Promise.allSettled([...activeRuns]),
+      new Promise<void>((resolve) => setTimeout(resolve, 8000))
+    ]);
+  };
 
-  process.once("SIGINT", () => {
-    bot.stop();
-  });
-  process.once("SIGTERM", () => {
-    bot.stop();
-  });
+  process.once("SIGINT", () => { void shutdown(); });
+  process.once("SIGTERM", () => { void shutdown(); });
 
   logInfo("Telegram host started", {
     bot_name: botName,

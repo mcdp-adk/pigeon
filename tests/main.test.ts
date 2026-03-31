@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => {
     responseContexts: [] as Array<{
       sendInitial: ReturnType<typeof vi.fn>;
       updateProgress: ReturnType<typeof vi.fn>;
+      appendDelta: ReturnType<typeof vi.fn>;
       sendFinal: ReturnType<typeof vi.fn>;
       markStopped: ReturnType<typeof vi.fn>;
     }>,
@@ -69,6 +70,7 @@ const mocks = vi.hoisted(() => {
       const responseContext = {
         sendInitial: vi.fn(async () => undefined),
         updateProgress: vi.fn(async () => undefined),
+        appendDelta: vi.fn(async (_delta: string) => undefined),
         sendFinal: vi.fn(async (_text: string) => undefined),
         markStopped: vi.fn(async () => undefined)
       };
@@ -234,6 +236,12 @@ const startHostWithHandler = async () => {
     logSpy.mockRestore();
     warnSpy.mockRestore();
     throw error;
+  }
+};
+
+const flushRuns = async () => {
+  for (let i = 0; i < 10; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 };
 
@@ -444,7 +452,7 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith("_没有正在进行的任务。_", { parse_mode: "Markdown" });
+      expect(ctx.reply).toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Handled command command=stop"));
     } finally {
       restore();
@@ -465,7 +473,7 @@ describe("main startup", () => {
 
       expect(mocks.runner.abort).not.toHaveBeenCalled();
       expect(mocks.createResponseContext).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith("_没有正在进行的任务。_", { parse_mode: "Markdown" });
+      expect(ctx.reply).toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
     } finally {
       restore();
     }
@@ -539,6 +547,38 @@ describe("main startup", () => {
     }
   });
 
+  it("startup: does not route plain text that only mentions /stop mid-message as stop command", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
+      })
+    );
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const ctx = createContext(
+        mergeMessage({
+          text: "Use the bash tool, then maybe /stop later",
+          entities: [{ type: "bot_command", offset: 30, length: 5 }]
+        })
+      );
+
+      await handler(ctx);
+
+      const responseContext = getLastResponseContext();
+      expect(mocks.runner.abort).not.toHaveBeenCalled();
+      expect(ctx.reply).not.toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      expect(responseContext.sendInitial).toHaveBeenCalledOnce();
+      expect(mocks.runner.run).toHaveBeenCalledOnce();
+    } finally {
+      restore();
+    }
+  });
+
   it("startup: unauthorized non-start messages stay silent", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
@@ -587,6 +627,7 @@ describe("main startup", () => {
       const ctx = createContext(message);
 
       await handler(ctx);
+      await flushRuns();
 
       const responseContext = getLastResponseContext();
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
@@ -634,6 +675,7 @@ describe("main startup", () => {
       const ctx = createContext(message);
 
       await handler(ctx);
+      await flushRuns();
 
       const responseContext = getLastResponseContext();
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
@@ -661,6 +703,7 @@ describe("main startup", () => {
       const ctx = createContext(message);
 
       await handler(ctx);
+      await flushRuns();
 
       const responseContext = getLastResponseContext();
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
@@ -687,6 +730,7 @@ describe("main startup", () => {
       const ctx = createContext(message);
 
       await handler(ctx);
+      await flushRuns();
 
       const responseContext = getLastResponseContext();
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
@@ -750,6 +794,7 @@ describe("main startup", () => {
       const ctx = createContext(message);
 
       await handler(ctx);
+      await flushRuns();
 
       expect(mocks.getChatPolicy).toHaveBeenCalledWith(1001, expect.any(Object));
       const responseContext = getLastResponseContext();
@@ -780,8 +825,8 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith("_目前只支持文字消息。_", {
-        parse_mode: "Markdown"
+      expect(ctx.reply).toHaveBeenCalledWith("<i>目前只支持文字消息。</i>", {
+        parse_mode: "HTML"
       });
       expect(mocks.createResponseContext).not.toHaveBeenCalled();
       expect(mocks.runner.run).not.toHaveBeenCalled();
@@ -817,8 +862,8 @@ describe("main startup", () => {
       await handler(secondCtx);
 
       expect(secondCtx.reply).toHaveBeenCalledWith(
-        "_已在处理上一条消息，请等待或发送 /stop 取消。_",
-        { parse_mode: "Markdown" }
+        "<i>已在处理上一条消息，请等待或发送 /stop 取消。</i>",
+        { parse_mode: "HTML" }
       );
       expect(mocks.runner.run).toHaveBeenCalledTimes(1);
 
@@ -840,17 +885,15 @@ describe("main startup", () => {
     );
     mocks.runner.run.mockImplementation(async (input) => {
       await input.onEvent?.({
-        type: "tool_execution_start",
+        type: "tool_start",
         toolName: "read",
-        toolCallId: "tool-1",
-        args: {}
+        label: "read",
       });
       await input.onEvent?.({
-        type: "tool_execution_end",
+        type: "tool_end",
         toolName: "read",
-        toolCallId: "tool-1",
+        label: "read",
         isError: false,
-        result: { content: [{ type: "text", text: "ok" }] }
       });
       return {
         stopReason: "stop",
@@ -864,6 +907,7 @@ describe("main startup", () => {
       const ctx = createContext(mergeMessage({ text: "hello team" }));
 
       await handler(ctx);
+      await flushRuns();
 
       const responseContext = getLastResponseContext();
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
