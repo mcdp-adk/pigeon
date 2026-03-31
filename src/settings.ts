@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { config as loadDotenv } from "dotenv";
+
 export interface TelegramSettings {
   proxy: string;
 }
@@ -71,6 +73,8 @@ function assertPlainObject(value: unknown, path: string): asserts value is Recor
 }
 
 export const loadSettings = async (): Promise<Settings> => {
+  loadDotenv({ path: resolve(process.cwd(), ".env") });
+
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!telegramToken || telegramToken.trim() === "") {
     throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");

@@ -111,6 +111,35 @@ describe("settings", () => {
     await expect(loadSettings()).rejects.toThrow(/TELEGRAM_BOT_TOKEN/i);
   });
 
+  it("loads TELEGRAM_BOT_TOKEN from cwd .env when process env is empty", async () => {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+
+    await writeFile(
+      ".env",
+      "TELEGRAM_BOT_TOKEN=from-dotenv\n",
+      "utf8"
+    );
+
+    await writeSettingsJson({
+      telegram: { proxy: "" },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
+      explicit_only: true,
+      allowed_chats: {}
+    });
+
+    await expect(loadSettings()).resolves.toEqual({
+      telegram: {
+        proxy: ""
+      },
+      ai: { provider: "openai", model: "gpt-4o-mini" },
+      sandbox: "host",
+      explicit_only: true,
+      allowed_chats: {}
+    });
+    expect(process.env.TELEGRAM_BOT_TOKEN).toBe("from-dotenv");
+  });
+
   it("requires top-level explicit_only to be boolean", async () => {
     await writeSettingsJson({
       telegram: { proxy: "" },
