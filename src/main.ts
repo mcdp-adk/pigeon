@@ -110,10 +110,10 @@ interface ChatState {
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");
-const BUSY_REPLY = "<i>已在处理上一条消息，请等待或发送 /stop 取消。</i>";
-const UNSUPPORTED_TEXT_REPLY = "<i>目前只支持文字消息。</i>";
-const RUN_FAILED_REPLY = "<i>处理失败，请稍后重试。</i>";
-const EMPTY_REPLY = "<i>未返回文本结果。</i>";
+const BUSY_REPLY = "<b>⏳ 正在处理上一条消息</b>\n\n请稍候，或发送 /stop 取消当前任务。";
+const UNSUPPORTED_TEXT_REPLY = "<b>⚠️ 无法处理此消息</b>\n\n仅支持纯文字消息，请发送文字内容。";
+const RUN_FAILED_REPLY = "<b>❌ 处理失败</b>\n\n任务执行时出错，请稍后重试。";
+const EMPTY_REPLY = "<b>ℹ️ 无回复内容</b>";
 
 const chatStates = new Map<string, ChatState>();
 
@@ -186,7 +186,7 @@ async function dispatchSystemCommand(params: {
   if (commandName === "stop") {
     const state = getOrCreateChatState(message.chat.id, settings);
     if (!state.running) {
-      await ctx.reply("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      await ctx.reply("<b>ℹ️ 没有正在运行的任务</b>", { parse_mode: "HTML" });
       logInfo("Handled command", {
         command: commandName,
         chat_id: message.chat.id,

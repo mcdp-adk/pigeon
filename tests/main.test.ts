@@ -384,7 +384,7 @@ describe("main startup", () => {
         formatStartReply(message, "pigeon_bot", false).text,
         { parse_mode: "HTML" }
       );
-      expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload=");
+      expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload:");
     } finally {
       restore();
     }
@@ -452,7 +452,7 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      expect(ctx.reply).toHaveBeenCalledWith("<b>ℹ️ 没有正在运行的任务</b>", { parse_mode: "HTML" });
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Handled command command=stop"));
     } finally {
       restore();
@@ -473,7 +473,7 @@ describe("main startup", () => {
 
       expect(mocks.runner.abort).not.toHaveBeenCalled();
       expect(mocks.createResponseContext).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      expect(ctx.reply).toHaveBeenCalledWith("<b>ℹ️ 没有正在运行的任务</b>", { parse_mode: "HTML" });
     } finally {
       restore();
     }
@@ -571,7 +571,7 @@ describe("main startup", () => {
 
       const responseContext = getLastResponseContext();
       expect(mocks.runner.abort).not.toHaveBeenCalled();
-      expect(ctx.reply).not.toHaveBeenCalledWith("<i>没有正在进行的任务。</i>", { parse_mode: "HTML" });
+      expect(ctx.reply).not.toHaveBeenCalledWith("<b>ℹ️ 没有正在运行的任务</b>", { parse_mode: "HTML" });
       expect(responseContext.sendInitial).toHaveBeenCalledOnce();
       expect(mocks.runner.run).toHaveBeenCalledOnce();
     } finally {
@@ -825,7 +825,7 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith("<i>目前只支持文字消息。</i>", {
+      expect(ctx.reply).toHaveBeenCalledWith("<b>⚠️ 无法处理此消息</b>\n\n仅支持纯文字消息，请发送文字内容。", {
         parse_mode: "HTML"
       });
       expect(mocks.createResponseContext).not.toHaveBeenCalled();
@@ -862,7 +862,7 @@ describe("main startup", () => {
       await handler(secondCtx);
 
       expect(secondCtx.reply).toHaveBeenCalledWith(
-        "<i>已在处理上一条消息，请等待或发送 /stop 取消。</i>",
+        "<b>⏳ 正在处理上一条消息</b>\n\n请稍候，或发送 /stop 取消当前任务。",
         { parse_mode: "HTML" }
       );
       expect(mocks.runner.run).toHaveBeenCalledTimes(1);
