@@ -124,11 +124,17 @@ vi.mock("../src/telegram.js", async () => {
 interface TestSettings {
   telegram: {
     proxy: string;
+    explicit_only: boolean;
+    allowed_chats: Record<string, { explicit_only?: boolean }>;
   };
   ai: { provider: string; model: string };
   sandbox: string;
-  explicit_only: boolean;
-  allowed_chats: Record<string, { explicit_only?: boolean }>;
+}
+
+interface TestSettingsOverrides {
+  telegram?: Partial<TestSettings["telegram"]>;
+  ai?: TestSettings["ai"];
+  sandbox?: string;
 }
 
 type MessageHandler = (ctx: {
@@ -139,22 +145,23 @@ type MessageHandler = (ctx: {
 const workspaceRoot = process.cwd();
 const settingsJsonPath = `${workspaceRoot}/settings.json`;
 
-const createSettings = (overrides: Partial<TestSettings> = {}): TestSettings => {
+const createSettings = (overrides: TestSettingsOverrides = {}): TestSettings => {
   return {
     telegram: {
       proxy: "",
+      explicit_only: true,
+      allowed_chats: { "1001": {} },
       ...(overrides.telegram ?? {})
     },
     ai: overrides.ai ?? { provider: "openai", model: "gpt-4o-mini" },
-    sandbox: overrides.sandbox ?? "host",
-    explicit_only: overrides.explicit_only ?? true,
-    allowed_chats: overrides.allowed_chats ?? { "1001": {} }
+    sandbox: overrides.sandbox ?? "host"
   };
 };
 
 const resolveChatPolicy = (chatId: string | number | bigint, settings: TestSettings) => {
   return {
-    explicit_only: settings.allowed_chats[String(chatId)]?.explicit_only ?? settings.explicit_only
+    explicit_only:
+      settings.telegram.allowed_chats[String(chatId)]?.explicit_only ?? settings.telegram.explicit_only
   };
 };
 
@@ -467,8 +474,10 @@ describe("main startup", () => {
   it("startup: /stop@pigeon_bot stops an active run", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -533,8 +542,10 @@ describe("main startup", () => {
   it("startup: unauthorized non-start messages stay silent", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -562,8 +573,10 @@ describe("main startup", () => {
   it("startup: explicit_only false allows ordinary allowed-chat text", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -601,8 +614,10 @@ describe("main startup", () => {
   it("startup: reply-to-bot enters debug path under explicit_only", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: true,
-        allowed_chats: { "-100987": {} }
+        telegram: {
+          explicit_only: true,
+          allowed_chats: { "-100987": {} }
+        }
       })
     );
     mocks.botInstance.botInfo = {
@@ -658,8 +673,10 @@ describe("main startup", () => {
   it("startup: photo plus caption enters extraction and debug reply path", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "-100987": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "-100987": {} }
+        }
       })
     );
 
@@ -688,8 +705,10 @@ describe("main startup", () => {
   it("startup: service messages are skipped without reply", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -715,9 +734,11 @@ describe("main startup", () => {
   it("startup: per-chat override can relax the default explicit gate", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: true,
-        allowed_chats: {
-          "1001": { explicit_only: false }
+        telegram: {
+          explicit_only: true,
+          allowed_chats: {
+            "1001": { explicit_only: false }
+          }
         }
       })
     );
@@ -742,8 +763,10 @@ describe("main startup", () => {
   it("startup: unsupported non-text content gets a markdown reply without starting a run", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -770,8 +793,10 @@ describe("main startup", () => {
   it("startup: a second message in the same chat gets the busy reply", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
     let resolveRun: (() => void) | undefined;
@@ -807,8 +832,10 @@ describe("main startup", () => {
   it("startup: accepted text messages stream progress through response context and send final reply", async () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
     mocks.runner.run.mockImplementation(async (input) => {
@@ -883,10 +910,10 @@ describe("main proxy", () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
         telegram: {
-          proxy: "http://127.0.0.1:7890"
-        },
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+          proxy: "http://127.0.0.1:7890",
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
     mocks.getChatPolicy.mockImplementation(resolveChatPolicy);
@@ -926,10 +953,10 @@ describe("main proxy", () => {
     mocks.loadSettings.mockResolvedValue(
       createSettings({
         telegram: {
-          proxy: "socks5://127.0.0.1:7890"
-        },
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+          proxy: "socks5://127.0.0.1:7890",
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
 
@@ -970,8 +997,10 @@ describe("main signal", () => {
 
     mocks.loadSettings.mockResolvedValue(
       createSettings({
-        explicit_only: false,
-        allowed_chats: { "1001": {} }
+        telegram: {
+          explicit_only: false,
+          allowed_chats: { "1001": {} }
+        }
       })
     );
     mocks.getChatPolicy.mockImplementation(resolveChatPolicy);

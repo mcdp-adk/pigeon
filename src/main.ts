@@ -176,8 +176,8 @@ export const startTelegramHost = async () => {
   const proxyConfig = createProxyConfig(settings.telegram.proxy);
 
   logInfo("Initializing Telegram host", {
-    explicit_only: settings.explicit_only,
-    allowed_chats: Object.keys(settings.allowed_chats).length,
+    explicit_only: settings.telegram.explicit_only,
+    allowed_chats: Object.keys(settings.telegram.allowed_chats).length,
     proxy: proxyConfig.label
   });
 
@@ -214,7 +214,7 @@ export const startTelegramHost = async () => {
     const command = extractCommandForBot(message, botInfo.username);
 
     if (command.commandName === "start") {
-      const isAuthorized = isChatAllowed(message.chat.id, settings.allowed_chats);
+      const isAuthorized = isChatAllowed(message.chat.id, settings.telegram.allowed_chats);
       await sendTelegramReply(formatStartReply(message, botName, isAuthorized), ctx.reply.bind(ctx));
       logInfo("Handled command", {
         command: command.commandName,
@@ -269,7 +269,7 @@ export const startTelegramHost = async () => {
     const chatPolicy = getChatPolicy(message.chat.id, settings);
     const decision = getMessageHandlingDecision(message, {
       explicitOnly: chatPolicy.explicit_only,
-      allowedChats: settings.allowed_chats,
+      allowedChats: settings.telegram.allowed_chats,
       botId: botInfo.id,
       botUsername: botInfo.username
     });

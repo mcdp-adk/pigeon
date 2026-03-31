@@ -68,11 +68,9 @@ const createFakeSession = (): FakeSessionContext => {
 
 const createSettings = () => {
   return {
-    telegram: { proxy: "" },
+    telegram: { proxy: "", explicit_only: false, allowed_chats: {} },
     ai: { provider: "anthropic", model: "claude-sonnet-4-5" },
-    sandbox: "host",
-    explicit_only: false,
-    allowed_chats: {}
+    sandbox: "host"
   };
 };
 

@@ -37,52 +37,56 @@ describe("settings", () => {
 
   it("loads valid settings and keeps empty proxy", async () => {
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": {},
+          "-1002": { explicit_only: false }
+        }
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": {},
-        "-1002": { explicit_only: false }
-      }
+      sandbox: "host"
     });
 
     await expect(loadSettings()).resolves.toEqual({
       telegram: {
-        proxy: ""
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": {},
+          "-1002": { explicit_only: false }
+        }
       },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": {},
-        "-1002": { explicit_only: false }
-      }
+      sandbox: "host"
     });
   });
 
   it("loads settings when top-level $schema is present", async () => {
     await writeSettingsJson({
       $schema: "./settings.schema.json",
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": {}
+        }
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "docker:default",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": {}
-      }
+      sandbox: "docker:default"
     });
 
     await expect(loadSettings()).resolves.toEqual({
       telegram: {
-        proxy: ""
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": {}
+        }
       },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "docker:default",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": {}
-      }
+      sandbox: "docker:default"
     });
   });
 
@@ -101,11 +105,13 @@ describe("settings", () => {
     delete process.env.TELEGRAM_BOT_TOKEN;
 
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {}
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {}
+      sandbox: "host"
     });
 
     await expect(loadSettings()).rejects.toThrow(/TELEGRAM_BOT_TOKEN/i);
@@ -121,91 +127,103 @@ describe("settings", () => {
     );
 
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {}
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {}
+      sandbox: "host"
     });
 
     await expect(loadSettings()).resolves.toEqual({
       telegram: {
-        proxy: ""
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {}
       },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {}
+      sandbox: "host"
     });
     expect(process.env.TELEGRAM_BOT_TOKEN).toBe("from-dotenv");
   });
 
-  it("requires top-level explicit_only to be boolean", async () => {
+  it("requires telegram.explicit_only to be boolean", async () => {
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: "true",
+        allowed_chats: {}
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: "true",
-      allowed_chats: {}
+      sandbox: "host"
     });
 
-    await expect(loadSettings()).rejects.toThrow(/explicit_only/i);
+    await expect(loadSettings()).rejects.toThrow(/telegram\.explicit_only|explicit_only/i);
     await expect(loadSettings()).rejects.toThrow(/boolean/i);
   });
 
-  it("requires allowed_chats to be an object", async () => {
+  it("requires telegram.allowed_chats to be an object", async () => {
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: []
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: []
+      sandbox: "host"
     });
 
-    await expect(loadSettings()).rejects.toThrow(/allowed_chats/i);
+    await expect(loadSettings()).rejects.toThrow(/telegram\.allowed_chats|allowed_chats/i);
     await expect(loadSettings()).rejects.toThrow(/object/i);
   });
 
   it("rejects invalid per-chat policy payload", async () => {
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": { explicit_only: "yes" }
+        }
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": { explicit_only: "yes" }
-      }
+      sandbox: "host"
     });
 
-    await expect(loadSettings()).rejects.toThrow(/allowed_chats\[-1001\]/i);
+    await expect(loadSettings()).rejects.toThrow(/telegram\.allowed_chats\[-1001\]/i);
     await expect(loadSettings()).rejects.toThrow(/explicit_only.*boolean/i);
   });
 
   it("rejects unknown keys in per-chat policy", async () => {
     await writeSettingsJson({
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": { extra: true }
+        }
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": { extra: true }
-      }
+      sandbox: "host"
     });
 
-    await expect(loadSettings()).rejects.toThrow(/allowed_chats\[-1001\]/i);
+    await expect(loadSettings()).rejects.toThrow(/telegram\.allowed_chats\[-1001\]/i);
     await expect(loadSettings()).rejects.toThrow(/only.*explicit_only|unsupported/i);
   });
 
   it("resolves chat policy with String(chatId), global default and override", () => {
     const settings = {
-      telegram: { proxy: "" },
+      telegram: {
+        proxy: "",
+        explicit_only: true,
+        allowed_chats: {
+          "-1001": {},
+          "-1002": { explicit_only: false }
+        }
+      },
       ai: { provider: "openai", model: "gpt-4o-mini" },
-      sandbox: "host",
-      explicit_only: true,
-      allowed_chats: {
-        "-1001": {},
-        "-1002": { explicit_only: false }
-      }
+      sandbox: "host"
     };
 
     expect(getChatPolicy(-1001, settings).explicit_only).toBe(true);

@@ -96,18 +96,18 @@ cp settings.example.json settings.json
 ```json
 {
   "$schema": "./settings.schema.json",
+  "telegram": {
+    "proxy": "",
+    "explicit_only": true,
+    "allowed_chats": {
+      "CHAT_ID_HERE": {}
+    }
+  },
   "ai": {
     "provider": "openai",
     "model": "gpt-4o-mini"
   },
-  "sandbox": "host",
-  "telegram": {
-    "proxy": ""
-  },
-  "explicit_only": true,
-  "allowed_chats": {
-    "CHAT_ID_HERE": {}
-  }
+  "sandbox": "host"
 }
 ```
 
@@ -152,8 +152,8 @@ cp settings.example.json settings.json
 - `ai.provider`
 - `ai.model`
 - `sandbox`
-- `explicit_only`
-- `allowed_chats`
+- `telegram.explicit_only`
+- `telegram.allowed_chats`
 - `telegram.proxy` 可以留空字符串
 
 ### 当前 M2 推荐值

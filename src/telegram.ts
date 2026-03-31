@@ -490,7 +490,7 @@ export const formatStartReply = (
     lines.push(
       "This chat is not enabled yet.",
       `Ask the operator to add ${code(`chat.id=${chatId}`)} to ${code("settings.json")}:`,
-      code(`"allowed_chats": { "${chatId}": {} }`),
+      code(`"telegram": { "allowed_chats": { "${chatId}": {} } }`),
       `After that, send a message or use ${code("/help")}.`
     );
   }

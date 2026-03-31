@@ -395,7 +395,7 @@ describe("start", () => {
         "<b>Hello from pigeon-bot.</b>",
         "This chat is not enabled yet.",
         "Ask the operator to add <code>chat.id=2097986184</code> to <code>settings.json</code>:",
-        '<code>"allowed_chats": { "2097986184": {} }</code>',
+        '<code>"telegram": { "allowed_chats": { "2097986184": {} } }</code>',
         "After that, send a message or use <code>/help</code>."
       ].join("\n")
     });

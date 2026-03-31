@@ -1,15 +1,15 @@
 {
   "$schema": "./settings.schema.json",
+  "telegram": {
+    "proxy": "",
+    "explicit_only": true,
+    "allowed_chats": {
+      "CHAT_ID_HERE": {}
+    }
+  },
   "ai": {
     "provider": "openai",
     "model": "gpt-4o-mini"
   },
-  "sandbox": "host",
-  "telegram": {
-    "proxy": ""
-  },
-  "explicit_only": true,
-  "allowed_chats": {
-    "CHAT_ID_HERE": {}
-  }
+  "sandbox": "host"
 }
