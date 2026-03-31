@@ -507,8 +507,19 @@ function buildSystemPrompt(
 - For older history beyond your context, search log.jsonl (contains user messages and your final responses, but not tool results).
 
 ## Telegram Formatting (HTML)
-Bold: <b>text</b>, Italic: <i>text</i>, Code: <code>code</code>, Block: <pre>code</pre>
-Keep responses short. Telegram messages have a 4096 character limit.
+
+All responses use Telegram HTML format (parse_mode: HTML).
+
+Tag usage:
+- <b>text</b>: titles, key terms (at most once per paragraph)
+- <code>value</code>: commands, paths, config values, variable names
+- <pre>block</pre>: multi-line code blocks, command output
+- <pre><code class="language-xxx">block</code></pre>: syntax-highlighted code
+- <blockquote>text</blockquote>: quoted content, supplementary notes
+
+Forbidden: <i> <em> <u> <s> and any other tags.
+Use \n for line breaks (not <br>). Use "- " or "• " for list items.
+Keep responses under 4096 characters. For long output, summarize inline or offer to write to a file.
 
 ## Environment
 ${envDescription}
