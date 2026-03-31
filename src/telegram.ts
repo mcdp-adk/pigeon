@@ -383,6 +383,22 @@ const extractCommandFromSource = (
   };
 };
 
+const extractCommandHeaderFromSource = (
+  sourceText: string | undefined,
+  entities: TelegramEntity[] | undefined
+): TelegramCommand & { addressedBotUsername: string | undefined } => {
+  if (!sourceText || !entities || entities.length === 0) {
+    return { commandName: undefined, commandArgs: undefined, addressedBotUsername: undefined };
+  }
+
+  const commandEntity = entities.find((entity) => entity.type === "bot_command" && entity.offset === 0);
+  if (!commandEntity) {
+    return { commandName: undefined, commandArgs: undefined, addressedBotUsername: undefined };
+  }
+
+  return extractCommandFromSource(sourceText, [commandEntity]);
+};
+
 export const extractCommand = (message: TelegramMessage): TelegramCommand => {
   const fromTextCommand = extractCommandFromSource(message.text, message.entities);
   const fromCaptionCommand = extractCommandFromSource(message.caption, message.caption_entities);
@@ -397,8 +413,8 @@ export const extractCommandForBot = (
   message: TelegramMessage,
   botUsername: string | undefined
 ): TelegramCommand => {
-  const fromTextCommand = extractCommandFromSource(message.text, message.entities);
-  const fromCaptionCommand = extractCommandFromSource(message.caption, message.caption_entities);
+  const fromTextCommand = extractCommandHeaderFromSource(message.text, message.entities);
+  const fromCaptionCommand = extractCommandHeaderFromSource(message.caption, message.caption_entities);
 
   const command = fromTextCommand.commandName ? fromTextCommand : fromCaptionCommand;
   if (!command.commandName) {
@@ -514,118 +530,114 @@ export const formatHelpReply = (botName: string): TelegramReply => {
 export interface TelegramResponseContext {
   sendInitial(): Promise<void>;
   updateProgress(label: string): Promise<void>;
+  appendDelta(delta: string): Promise<void>;
   sendFinal(text: string): Promise<void>;
   markStopped(): Promise<void>;
 }
 
 export const createResponseContext = (ctx: Context): TelegramResponseContext => {
   let messageId: number | undefined;
-  let currentText = "_⏳ 正在处理..._";
-  
-  let lastEditTime = 0;
-  let pendingEditTimeout: NodeJS.Timeout | undefined;
-  let pendingLabel: string | undefined;
+  let progressText = "<i>⏳ 正在处理...</i>";
+  let lastProgressEdit = 0;
+  let pendingProgressTimeout: NodeJS.Timeout | undefined;
 
-  const flushProgress = async () => {
-    if (!messageId || !pendingLabel) return;
-    
-    const labelToAppend = pendingLabel;
-    pendingLabel = undefined;
-    
-    currentText += `\n→ ${labelToAppend}`;
-    lastEditTime = Date.now();
-    
-    try {
-      await ctx.api.editMessageText(ctx.chat!.id, messageId, currentText, {
-        parse_mode: "Markdown"
-      });
-    } catch (err) {
-      // Ignore edit errors (e.g., message not modified)
+  let streamingText = "";
+  let inStreamingMode = false;
+  let lastStreamEdit = 0;
+  let pendingStreamTimeout: NodeJS.Timeout | undefined;
+
+  const EDIT_INTERVAL_MS = 1000;
+
+  const TELEGRAM_MAX_LENGTH = 4096;
+
+  const splitText = (text: string): string[] => {
+    if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
+    const parts: string[] = [];
+    let remaining = text;
+    while (remaining.length > 0) {
+      parts.push(remaining.slice(0, TELEGRAM_MAX_LENGTH));
+      remaining = remaining.slice(TELEGRAM_MAX_LENGTH);
     }
+    return parts;
+  };
+
+  const doEdit = async (text: string): Promise<void> => {
+    if (!messageId) return;
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { parse_mode: "HTML" });
+    } catch {}
+  };
+
+  const flushProgress = async (): Promise<void> => {
+    if (pendingProgressTimeout) { clearTimeout(pendingProgressTimeout); pendingProgressTimeout = undefined; }
+    lastProgressEdit = Date.now();
+    await doEdit(progressText);
+  };
+
+  const flushStream = async (): Promise<void> => {
+    if (pendingStreamTimeout) { clearTimeout(pendingStreamTimeout); pendingStreamTimeout = undefined; }
+    lastStreamEdit = Date.now();
+    await doEdit(streamingText);
+  };
+
+  const cancelPending = (): void => {
+    if (pendingProgressTimeout) { clearTimeout(pendingProgressTimeout); pendingProgressTimeout = undefined; }
+    if (pendingStreamTimeout) { clearTimeout(pendingStreamTimeout); pendingStreamTimeout = undefined; }
   };
 
   return {
     async sendInitial() {
       if (messageId) return;
-      const msg = await ctx.reply(currentText, { parse_mode: "Markdown" });
+      const msg = await ctx.reply(progressText, { parse_mode: "HTML" });
       messageId = msg.message_id;
     },
-    
-    async updateProgress(label: string) {
-      if (!messageId) return;
-      
-      if (pendingLabel) {
-        pendingLabel += `\n→ ${label}`;
-      } else {
-        pendingLabel = label;
-      }
 
-      const now = Date.now();
-      const timeSinceLastEdit = now - lastEditTime;
-      
-      if (timeSinceLastEdit >= 2000) {
-        if (pendingEditTimeout) {
-          clearTimeout(pendingEditTimeout);
-          pendingEditTimeout = undefined;
-        }
+    async updateProgress(label: string) {
+      if (!messageId || inStreamingMode) return;
+      progressText += `\n→ ${label}`;
+      const timeSince = Date.now() - lastProgressEdit;
+      if (timeSince >= EDIT_INTERVAL_MS) {
         await flushProgress();
-      } else if (!pendingEditTimeout) {
-        pendingEditTimeout = setTimeout(() => {
-          pendingEditTimeout = undefined;
-          flushProgress().catch(() => {});
-        }, 2000 - timeSinceLastEdit);
+      } else if (!pendingProgressTimeout) {
+        pendingProgressTimeout = setTimeout(() => { pendingProgressTimeout = undefined; flushProgress().catch(() => {}); }, EDIT_INTERVAL_MS - timeSince);
       }
     },
-    
-    async sendFinal(text: string) {
-      if (pendingEditTimeout) {
-        clearTimeout(pendingEditTimeout);
-        pendingEditTimeout = undefined;
-      }
-      
-      let draftSuccess = false;
-      if (typeof (ctx.api as any).sendMessageDraft === "function") {
-        try {
-          const updateId = ctx.update?.update_id;
-          if (updateId) {
-            await (ctx.api as any).sendMessageDraft(ctx.chat!.id, updateId, text);
-            draftSuccess = true;
-          }
-        } catch (err) {
-          // Fallback
-        }
-      }
-      
-      if (!draftSuccess) {
-        if (messageId) {
-          try {
-            await ctx.api.editMessageText(ctx.chat!.id, messageId, text, {
-              parse_mode: "Markdown"
-            });
-          } catch (err) {
-            await ctx.reply(text, { parse_mode: "Markdown" });
-          }
-        } else {
-          await ctx.reply(text, { parse_mode: "Markdown" });
-        }
-      }
-    },
-    
-    async markStopped() {
-      if (pendingEditTimeout) {
-        clearTimeout(pendingEditTimeout);
-        pendingEditTimeout = undefined;
-      }
+
+    async appendDelta(delta: string) {
       if (!messageId) return;
-      
-      currentText = "_已停止。_";
-      try {
-        await ctx.api.editMessageText(ctx.chat!.id, messageId, currentText, {
-          parse_mode: "Markdown"
-        });
-      } catch (err) {
-        // Ignore
+      if (!inStreamingMode) {
+        inStreamingMode = true;
+        cancelPending();
+        streamingText = "";
+        await doEdit("<i>...</i>");
       }
+      streamingText += delta;
+      const timeSince = Date.now() - lastStreamEdit;
+      if (timeSince >= EDIT_INTERVAL_MS) {
+        await flushStream();
+      } else if (!pendingStreamTimeout) {
+        pendingStreamTimeout = setTimeout(() => { pendingStreamTimeout = undefined; flushStream().catch(() => {}); }, EDIT_INTERVAL_MS - timeSince);
+      }
+    },
+
+    async sendFinal(text: string) {
+      cancelPending();
+      const parts = splitText(text);
+      const first = parts[0] ?? "";
+      if (messageId) {
+        await doEdit(first);
+      } else {
+        await ctx.reply(first, { parse_mode: "HTML" });
+      }
+      for (let i = 1; i < parts.length; i++) {
+        await ctx.reply(parts[i]!, { parse_mode: "HTML" });
+      }
+    },
+
+    async markStopped() {
+      cancelPending();
+      if (!messageId) return;
+      await doEdit("<i>已停止。</i>");
     }
   };
 };

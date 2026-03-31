@@ -100,6 +100,22 @@ describe("telegram message filters", () => {
     });
   });
 
+  it("does not treat mid-message bot_command entity as host command", () => {
+    const message = mergeMessage({
+      text: "say hi before /stop now",
+      entities: [{ type: "bot_command", offset: 14, length: 5 }]
+    });
+
+    expect(extractCommand(message)).toEqual({
+      commandName: "stop",
+      commandArgs: "now"
+    });
+    expect(extractCommandForBot(message, "mybot")).toEqual({
+      commandName: undefined,
+      commandArgs: undefined
+    });
+  });
+
   it("filters service messages by positive content fields", () => {
     const serviceOnlyMessage = mergeMessage({
       new_chat_members: [{ id: 777, is_bot: false, first_name: "N" }]

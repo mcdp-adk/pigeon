@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createResponseContext } from "./telegram.js";
 
 describe("TelegramResponseContext", () => {
@@ -10,136 +10,140 @@ describe("TelegramResponseContext", () => {
     vi.useRealTimers();
   });
 
-  it("should send initial message and track message id", async () => {
+  it("发送初始消息并跟踪消息 ID", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      api: { editMessageText: vi.fn() }
+      api: { editMessageText: vi.fn() },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
 
-    expect(replyMock).toHaveBeenCalledWith("_⏳ 正在处理..._", { parse_mode: "Markdown" });
+    expect(replyMock).toHaveBeenCalledWith("<i>⏳ 正在处理...</i>", { parse_mode: "HTML" });
   });
 
-  it("should throttle updateProgress edits to at most once per 2 seconds", async () => {
+  it("updateProgress 在 1 秒内合并多次更新", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
-    const editMessageTextMock = vi.fn().mockResolvedValue(true);
+    const editMock = vi.fn().mockResolvedValue(true);
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      api: { editMessageText: editMessageTextMock }
+      api: { editMessageText: editMock },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
 
-    // First update should be executed immediately
-    await responseCtx.updateProgress("step 1");
-    expect(editMessageTextMock).toHaveBeenCalledWith(
+    await responseCtx.updateProgress("步骤 1");
+    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>⏳ 正在处理...</i>\n→ 步骤 1", { parse_mode: "HTML" });
+    editMock.mockClear();
+
+    await responseCtx.updateProgress("步骤 2");
+    await responseCtx.updateProgress("步骤 3");
+    expect(editMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(editMock).toHaveBeenCalledWith(
       456,
       123,
-      "_⏳ 正在处理..._\n→ step 1",
-      { parse_mode: "Markdown" }
-    );
-    editMessageTextMock.mockClear();
-
-    // Multiple updates within 2 seconds should be coalesced
-    await responseCtx.updateProgress("step 2");
-    await responseCtx.updateProgress("step 3");
-    expect(editMessageTextMock).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(editMessageTextMock).toHaveBeenCalledWith(
-      456,
-      123,
-      "_⏳ 正在处理..._\n→ step 1\n→ step 2\n→ step 3",
-      { parse_mode: "Markdown" }
+      "<i>⏳ 正在处理...</i>\n→ 步骤 1\n→ 步骤 2\n→ 步骤 3",
+      { parse_mode: "HTML" },
     );
   });
 
-  it("should use sendMessageDraft for sendFinal if available", async () => {
+  it("sendFinal 编辑已有消息，使用 HTML 格式", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
-    const sendMessageDraftMock = vi.fn().mockResolvedValue(true);
+    const editMock = vi.fn().mockResolvedValue(true);
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      update: { update_id: 789 },
-      api: { 
-        editMessageText: vi.fn(),
-        sendMessageDraft: sendMessageDraftMock
-      }
+      api: { editMessageText: editMock },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
-    await responseCtx.sendFinal("final text");
+    await responseCtx.sendFinal("最终回复");
 
-    expect(sendMessageDraftMock).toHaveBeenCalledWith(456, 789, "final text");
-    expect(ctx.api.editMessageText).not.toHaveBeenCalled();
+    expect(editMock).toHaveBeenCalledWith(456, 123, "最终回复", { parse_mode: "HTML" });
   });
 
-  it("should fallback to editMessageText for sendFinal if sendMessageDraft is unavailable", async () => {
+  it("sendFinal 在没有占位消息时直接发送新消息", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
-    const editMessageTextMock = vi.fn().mockResolvedValue(true);
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      update: { update_id: 789 },
-      api: { 
-        editMessageText: editMessageTextMock
-        // sendMessageDraft is undefined
-      }
+      api: { editMessageText: vi.fn() },
+    } as any;
+
+    const responseCtx = createResponseContext(ctx);
+    await responseCtx.sendFinal("最终回复");
+
+    expect(replyMock).toHaveBeenCalledWith("最终回复", { parse_mode: "HTML" });
+  });
+
+  it("appendDelta 首次调用清空进度文字，后续追加 delta", async () => {
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
+    const editMock = vi.fn().mockResolvedValue(true);
+    const ctx = {
+      reply: replyMock,
+      chat: { id: 456 },
+      api: { editMessageText: editMock },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
-    await responseCtx.sendFinal("final text");
+    await responseCtx.updateProgress("工具调用");
+    editMock.mockClear();
 
-    expect(editMessageTextMock).toHaveBeenCalledWith(456, 123, "final text", { parse_mode: "Markdown" });
+    await responseCtx.appendDelta("你");
+    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>...</i>", { parse_mode: "HTML" });
+    editMock.mockClear();
+
+    await responseCtx.appendDelta("好");
+    expect(editMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(editMock).toHaveBeenCalledWith(456, 123, "你好", { parse_mode: "HTML" });
   });
 
-  it("should fallback to reply for sendFinal if editMessageText fails", async () => {
+  it("appendDelta 在 1 秒内节流合并", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
-    const editMessageTextMock = vi.fn().mockRejectedValue(new Error("Message not modified"));
+    const editMock = vi.fn().mockResolvedValue(true);
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      update: { update_id: 789 },
-      api: { 
-        editMessageText: editMessageTextMock
-      }
+      api: { editMessageText: editMock },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
-    replyMock.mockClear();
-    await responseCtx.sendFinal("final text");
 
-    expect(editMessageTextMock).toHaveBeenCalled();
-    expect(replyMock).toHaveBeenCalledWith("final text", { parse_mode: "Markdown" });
+    await responseCtx.appendDelta("你");
+    editMock.mockClear();
+
+    await responseCtx.appendDelta("好");
+    await responseCtx.appendDelta("世界");
+    expect(editMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(editMock).toHaveBeenCalledWith(456, 123, "你好世界", { parse_mode: "HTML" });
   });
 
-  it("should update message to stopped when markStopped is called", async () => {
+  it("markStopped 将消息替换为停止提示", async () => {
     const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
-    const editMessageTextMock = vi.fn().mockResolvedValue(true);
+    const editMock = vi.fn().mockResolvedValue(true);
     const ctx = {
       reply: replyMock,
       chat: { id: 456 },
-      api: { editMessageText: editMessageTextMock }
+      api: { editMessageText: editMock },
     } as any;
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
     await responseCtx.markStopped();
 
-    expect(editMessageTextMock).toHaveBeenCalledWith(
-      456,
-      123,
-      "_已停止。_",
-      { parse_mode: "Markdown" }
-    );
+    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>已停止。</i>", { parse_mode: "HTML" });
   });
 });
