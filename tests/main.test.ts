@@ -127,7 +127,7 @@ interface TestSettings {
     explicit_only: boolean;
     allowed_chats: Record<string, { explicit_only?: boolean }>;
   };
-  ai: { provider: string; model: string };
+  ai: { proxy: string; provider: string; model: string };
   sandbox: string;
 }
 
@@ -153,7 +153,7 @@ const createSettings = (overrides: TestSettingsOverrides = {}): TestSettings => 
       allowed_chats: { "1001": {} },
       ...(overrides.telegram ?? {})
     },
-    ai: overrides.ai ?? { provider: "openai", model: "gpt-4o-mini" },
+    ai: overrides.ai ?? { proxy: "", provider: "openai", model: "gpt-4o-mini" },
     sandbox: overrides.sandbox ?? "host"
   };
 };

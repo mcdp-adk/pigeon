@@ -7,9 +7,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const createAgentSession = vi.fn();
   const getModel = vi.fn();
+  const setGlobalDispatcher = vi.fn();
+  const getGlobalDispatcher = vi.fn(() => "default-dispatcher");
+  const ProxyAgent = vi.fn(function ProxyAgent(this: Record<string, unknown>, proxy: string) {
+    this.kind = "http";
+    this.proxy = proxy;
+  });
+  const Socks5ProxyAgent = vi.fn(function Socks5ProxyAgent(this: Record<string, unknown>, proxy: string) {
+    this.kind = "socks5";
+    this.proxy = proxy;
+  });
   return {
     createAgentSession,
-    getModel
+    getModel,
+    setGlobalDispatcher,
+    getGlobalDispatcher,
+    ProxyAgent,
+    Socks5ProxyAgent
+  };
+});
+
+vi.mock("undici", () => {
+  return {
+    setGlobalDispatcher: mocks.setGlobalDispatcher,
+    getGlobalDispatcher: mocks.getGlobalDispatcher,
+    ProxyAgent: mocks.ProxyAgent,
+    Socks5ProxyAgent: mocks.Socks5ProxyAgent
   };
 });
 
@@ -69,7 +92,7 @@ const createFakeSession = (): FakeSessionContext => {
 const createSettings = () => {
   return {
     telegram: { proxy: "", explicit_only: false, allowed_chats: {} },
-    ai: { provider: "anthropic", model: "claude-sonnet-4-5" },
+    ai: { proxy: "", provider: "anthropic", model: "claude-sonnet-4-5" },
     sandbox: "host"
   };
 };
@@ -445,5 +468,56 @@ describe("agent runner", () => {
     await runPromise;
 
     expect(getRunnerCacheSizeForTests()).toBeLessThanOrEqual(100);
+  });
+
+  it("installs socks ai proxy from settings.ai.proxy", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-proxy-"));
+    const chatId = "66";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      const assistant = {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        stopReason: "stop"
+      };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    mocks.createAgentSession.mockResolvedValueOnce({
+      session: fake.session,
+      extensionsResult: { extensions: [], errors: [], runtime: {} }
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(
+      {
+        ...createSettings(),
+        ai: {
+          proxy: "socks5://127.0.0.1:7890",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5"
+        }
+      },
+      chatId,
+      chatDir
+    );
+
+    await runner.run(
+      {
+        chatId: Number(chatId),
+        ts: "1700000006000",
+        userText: "ping"
+      },
+      store
+    );
+
+    expect(mocks.Socks5ProxyAgent).toHaveBeenCalledWith("socks5://127.0.0.1:7890");
+    expect(mocks.setGlobalDispatcher).toHaveBeenCalled();
   });
 });

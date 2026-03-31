@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { getEnvApiKey, getModel } from "@mariozechner/pi-ai";
+import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher, Socks5ProxyAgent } from "undici";
 import {
   type AgentSession,
   type AgentSessionEvent,
@@ -66,6 +67,44 @@ interface RunnerCacheEntry {
 
 const MAX_RUNNER_CACHE_SIZE = 100;
 const cachedRunners = new Map<string, RunnerCacheEntry>();
+const defaultAiDispatcher = getGlobalDispatcher();
+let installedAiProxyKey: string | null = null;
+
+function installAiProxyDispatcher(proxy: string): void {
+  const trimmedProxy = proxy.trim();
+  if (trimmedProxy === "") {
+    if (installedAiProxyKey !== null) {
+      setGlobalDispatcher(defaultAiDispatcher);
+      installedAiProxyKey = null;
+    }
+    return;
+  }
+
+  if (installedAiProxyKey === trimmedProxy) {
+    return;
+  }
+
+  const proxyUrl = new URL(trimmedProxy);
+  const protocol = proxyUrl.protocol;
+
+  if (protocol === "http:" || protocol === "https:") {
+    setGlobalDispatcher(new ProxyAgent(trimmedProxy));
+    installedAiProxyKey = trimmedProxy;
+    return;
+  }
+
+  if (protocol === "socks5:" || protocol === "socks5h:" || protocol === "socks:") {
+    if (protocol === "socks5h:") {
+      proxyUrl.protocol = "socks5:";
+    }
+
+    setGlobalDispatcher(new Socks5ProxyAgent(proxyUrl.toString()));
+    installedAiProxyKey = trimmedProxy;
+    return;
+  }
+
+  throw new Error(`Unsupported ai.proxy protocol: ${protocol}`);
+}
 
 export function getRunnerCacheSizeForTests(): number {
   return cachedRunners.size;
@@ -253,6 +292,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Runn
 
 async function createRuntime(settings: Settings, chatId: string, chatDir: string): Promise<RunnerRuntime> {
   mkdirSync(chatDir, { recursive: true });
+  installAiProxyDispatcher(settings.ai.proxy);
 
   const sandboxConfig = parseSandboxArg(settings.sandbox);
   const baseExecutor = createExecutor(sandboxConfig);
