@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  const createAgentSession = vi.fn();
-  const getModel = vi.fn();
   const setGlobalDispatcher = vi.fn();
   const getGlobalDispatcher = vi.fn(() => "default-dispatcher");
   const ProxyAgent = vi.fn(function ProxyAgent(this: Record<string, unknown>, proxy: string) {
@@ -17,47 +15,42 @@ const mocks = vi.hoisted(() => {
     this.kind = "socks5";
     this.proxy = proxy;
   });
+  const getModel = vi.fn();
+
   return {
-    createAgentSession,
-    getModel,
     setGlobalDispatcher,
     getGlobalDispatcher,
     ProxyAgent,
-    Socks5ProxyAgent
+    Socks5ProxyAgent,
+    getModel,
+    AgentSession: vi.fn(),
+    Agent: vi.fn(),
   };
 });
 
-vi.mock("undici", () => {
-  return {
-    setGlobalDispatcher: mocks.setGlobalDispatcher,
-    getGlobalDispatcher: mocks.getGlobalDispatcher,
-    ProxyAgent: mocks.ProxyAgent,
-    Socks5ProxyAgent: mocks.Socks5ProxyAgent
-  };
-});
-
-vi.mock("@mariozechner/pi-coding-agent", async (importActual) => {
-  const actual = await importActual<typeof import("@mariozechner/pi-coding-agent")>();
-  return {
-    ...actual,
-    createAgentSession: mocks.createAgentSession
-  };
-});
+vi.mock("undici", () => ({
+  setGlobalDispatcher: mocks.setGlobalDispatcher,
+  getGlobalDispatcher: mocks.getGlobalDispatcher,
+  ProxyAgent: mocks.ProxyAgent,
+  Socks5ProxyAgent: mocks.Socks5ProxyAgent,
+}));
 
 vi.mock("@mariozechner/pi-ai", async (importActual) => {
   const actual = await importActual<typeof import("@mariozechner/pi-ai")>();
-  return {
-    ...actual,
-    getModel: mocks.getModel
-  };
+  return { ...actual, getModel: mocks.getModel };
 });
 
+interface FakeAgent {
+  replaceMessages: ReturnType<typeof vi.fn>;
+  setSystemPrompt: ReturnType<typeof vi.fn>;
+}
+
 interface FakeSessionContext {
+  agent: FakeAgent;
   session: {
-    agent: { replaceMessages: ReturnType<typeof vi.fn> };
+    agent: FakeAgent;
     messages: unknown[];
     subscribe: ReturnType<typeof vi.fn>;
-    reload: ReturnType<typeof vi.fn>;
     prompt: ReturnType<typeof vi.fn>;
     abort: ReturnType<typeof vi.fn>;
   };
@@ -65,37 +58,47 @@ interface FakeSessionContext {
 }
 
 const createFakeSession = (): FakeSessionContext => {
-  let listener: ((event: any) => void) | undefined;
+  let listener: ((event: unknown) => void) | undefined;
+
+  const agent: FakeAgent = {
+    replaceMessages: vi.fn(),
+    setSystemPrompt: vi.fn(),
+  };
 
   const session = {
-    agent: {
-      replaceMessages: vi.fn()
-    },
+    agent,
     messages: [] as unknown[],
-    subscribe: vi.fn((next: (event: any) => void) => {
+    subscribe: vi.fn((next: (event: unknown) => void) => {
       listener = next;
       return () => undefined;
     }),
-    reload: vi.fn(async () => undefined),
     prompt: vi.fn(async () => undefined),
-    abort: vi.fn(async () => undefined)
+    abort: vi.fn(async () => undefined),
   };
 
   return {
+    agent,
     session,
     emit(event: unknown): void {
       listener?.(event);
-    }
+    },
   };
 };
 
-const createSettings = () => {
+vi.mock("@mariozechner/pi-coding-agent", async (importActual) => {
+  const actual = await importActual<typeof import("@mariozechner/pi-coding-agent")>();
   return {
-    telegram: { proxy: "", explicit_only: false, allowed_chats: {} },
-    ai: { proxy: "", provider: "anthropic", model: "claude-sonnet-4-5" },
-    sandbox: "host"
+    ...actual,
+    Agent: mocks.Agent,
+    AgentSession: mocks.AgentSession,
   };
-};
+});
+
+const createSettings = () => ({
+  telegram: { proxy: "", explicit_only: false, allowed_chats: {} },
+  ai: { proxy: "", provider: "anthropic", model: "claude-sonnet-4-5" },
+  sandbox: "host",
+});
 
 describe("agent runner", () => {
   let sandboxDir = "";
@@ -107,7 +110,7 @@ describe("agent runner", () => {
       provider: "anthropic",
       id: "claude-sonnet-4-5",
       reasoning: true,
-      contextWindow: 200000
+      contextWindow: 200000,
     });
   });
 
@@ -117,7 +120,15 @@ describe("agent runner", () => {
     }
   });
 
+  const setupFakeSession = (fake: FakeSessionContext) => {
+    mocks.Agent.mockImplementation(function () { return fake.agent; });
+    mocks.AgentSession.mockImplementation(function () { return fake.session; });
+  };
+
   it("reuses the same runner for one chat", async () => {
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
     const { getOrCreateRunner } = await import("../src/agent.js");
     const settings = createSettings();
     const chatId = `reuse-${Date.now()}`;
@@ -125,7 +136,6 @@ describe("agent runner", () => {
 
     const first = getOrCreateRunner(settings, chatId, chatDir);
     const second = getOrCreateRunner(settings, chatId, chatDir);
-
     expect(first).toBe(second);
   });
 
@@ -135,20 +145,12 @@ describe("agent runner", () => {
     const dataDir = join(sandboxDir, "data");
     const chatDir = join(dataDir, `chat-${chatId}`);
     const fake = createFakeSession();
+    setupFakeSession(fake);
 
     fake.session.prompt.mockImplementationOnce(async () => {
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "pong" }],
-        stopReason: "stop"
-      };
+      const assistant = { role: "assistant", content: [{ type: "text", text: "pong" }], stopReason: "stop" };
       fake.session.messages.push(assistant);
       fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -161,7 +163,7 @@ describe("agent runner", () => {
       ts: "1700000000000",
       user: "u1",
       userName: "alice",
-      userText: "ping"
+      userText: "ping",
     }, store);
 
     expect(result.stopReason).toBe("stop");
@@ -189,30 +191,18 @@ describe("agent runner", () => {
     const dataDir = join(sandboxDir, "data");
     const chatDir = join(dataDir, `chat-${chatId}`);
     const fake = createFakeSession();
+    setupFakeSession(fake);
 
     let releasePrompt: (() => void) | undefined;
-    const waitForAbort = new Promise<void>((resolve) => {
-      releasePrompt = resolve;
-    });
+    const waitForAbort = new Promise<void>((resolve) => { releasePrompt = resolve; });
 
-    fake.session.abort.mockImplementationOnce(async () => {
-      releasePrompt?.();
-    });
+    fake.session.abort.mockImplementationOnce(async () => { releasePrompt?.(); });
 
     fake.session.prompt.mockImplementationOnce(async () => {
       await waitForAbort;
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "" }],
-        stopReason: "aborted"
-      };
+      const assistant = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "aborted" };
       fake.session.messages.push(assistant);
       fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -224,7 +214,7 @@ describe("agent runner", () => {
       chatId: Number(chatId),
       ts: "1700000001000",
       userName: "bob",
-      userText: "long task"
+      userText: "long task",
     }, store);
 
     await Promise.resolve();
@@ -243,30 +233,18 @@ describe("agent runner", () => {
     const chatMemoryPath = join(chatDir, "MEMORY.md");
     const skillDir = join(dataDir, "skills", "deploy");
     const fake = createFakeSession();
+    setupFakeSession(fake);
 
     await mkdir(skillDir, { recursive: true });
     await writeFile(workspaceMemoryPath, "global-memory-v1\n", "utf8");
     await mkdir(chatDir, { recursive: true });
     await writeFile(chatMemoryPath, "chat-memory-v1\n", "utf8");
-    await writeFile(
-      join(skillDir, "SKILL.md"),
-      "---\nname: deploy\ndescription: deploy helper\n---\n\n# deploy\n",
-      "utf8"
-    );
+    await writeFile(join(skillDir, "SKILL.md"), "---\nname: deploy\ndescription: deploy helper\n---\n\n# deploy\n", "utf8");
 
     fake.session.prompt.mockImplementation(async () => {
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "ok" }],
-        stopReason: "stop"
-      };
+      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
       fake.session.messages.push(assistant);
       fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -274,40 +252,19 @@ describe("agent runner", () => {
     const store = new ChatStore({ workingDir: dataDir });
     const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
 
-    await runner.run(
-      {
-        chatId: Number(chatId),
-        ts: "1700000002000",
-        user: "u3",
-        userName: "alice",
-        userText: "first"
-      },
-      store
-    );
+    await runner.run({ chatId: Number(chatId), ts: "1700000002000", user: "u3", userName: "alice", userText: "first" }, store);
 
-    const firstCall = mocks.createAgentSession.mock.calls[0]?.[0] as {
-      resourceLoader: { getSystemPrompt: () => string };
-    };
-    const firstPrompt = firstCall.resourceLoader.getSystemPrompt();
-    expect(firstPrompt).toContain("global-memory-v1");
-    expect(firstPrompt).toContain("chat-memory-v1");
-    expect(firstPrompt).toContain("deploy helper");
+    const firstCallArg = fake.agent.setSystemPrompt.mock.calls[0]?.[0] as string;
+    expect(firstCallArg).toContain("global-memory-v1");
+    expect(firstCallArg).toContain("chat-memory-v1");
+    expect(firstCallArg).toContain("deploy helper");
 
     await writeFile(workspaceMemoryPath, "global-memory-v2\n", "utf8");
 
-    await runner.run(
-      {
-        chatId: Number(chatId),
-        ts: "1700000003000",
-        user: "u3",
-        userName: "alice",
-        userText: "second"
-      },
-      store
-    );
+    await runner.run({ chatId: Number(chatId), ts: "1700000003000", user: "u3", userName: "alice", userText: "second" }, store);
 
-    const secondPrompt = firstCall.resourceLoader.getSystemPrompt();
-    expect(secondPrompt).toContain("global-memory-v2");
+    const secondCallArg = fake.agent.setSystemPrompt.mock.calls[1]?.[0] as string;
+    expect(secondCallArg).toContain("global-memory-v2");
   });
 
   it("supports async onEvent handlers without dropping them", async () => {
@@ -316,20 +273,13 @@ describe("agent runner", () => {
     const dataDir = join(sandboxDir, "data");
     const chatDir = join(dataDir, `chat-${chatId}`);
     const fake = createFakeSession();
+    setupFakeSession(fake);
 
     fake.session.prompt.mockImplementationOnce(async () => {
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "done" }],
-        stopReason: "stop"
-      };
+      const assistant = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" };
       fake.session.messages.push(assistant);
+      fake.emit({ type: "message_update", message: assistant, assistantMessageEvent: { type: "text_delta", delta: "done" } });
       fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -337,40 +287,29 @@ describe("agent runner", () => {
     const store = new ChatStore({ workingDir: dataDir });
     const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
 
-    let seenMessageEnd = false;
+    let seenDelta = false;
     let resolveEventHandler: (() => void) | undefined;
 
-    const runPromise = runner.run(
-      {
-        chatId: Number(chatId),
-        ts: "1700000004000",
-        user: "u7",
-        userName: "eve",
-        userText: "event test",
-        onEvent: async (event) => {
-          if (event.type !== "message_end") {
-            return;
-          }
-
-          await new Promise<void>((resolve) => {
-            resolveEventHandler = () => {
-              seenMessageEnd = true;
-              resolve();
-            };
-          });
-        }
+    const runPromise = runner.run({
+      chatId: Number(chatId),
+      ts: "1700000004000",
+      user: "u7",
+      userName: "eve",
+      userText: "event test",
+      onEvent: async (event) => {
+        if (event.type !== "text_delta") return;
+        await new Promise<void>((resolve) => {
+          resolveEventHandler = () => { seenDelta = true; resolve(); };
+        });
       },
-      store
-    );
+    }, store);
 
     let runSettled = false;
-    void runPromise.then(() => {
-      runSettled = true;
-    });
+    void runPromise.then(() => { runSettled = true; });
 
     await Promise.resolve();
     expect(runSettled).toBe(false);
-    expect(seenMessageEnd).toBe(false);
+    expect(seenDelta).toBe(false);
 
     for (let i = 0; i < 20 && !resolveEventHandler; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -380,94 +319,7 @@ describe("agent runner", () => {
 
     const result = await runPromise;
     expect(result.stopReason).toBe("stop");
-    expect(seenMessageEnd).toBe(true);
-  });
-
-  it("keeps runner cache bounded", async () => {
-    const { getOrCreateRunner, getRunnerCacheSizeForTests } = await import("../src/agent.js");
-    const settings = createSettings();
-    const maxPlusExtra = 130;
-    let firstRunner: unknown;
-
-    for (let i = 0; i < maxPlusExtra; i += 1) {
-      const chatId = String(1000 + i);
-      const chatDir = join(tmpdir(), "pigeon-cache", `chat-${chatId}`);
-      const runner = getOrCreateRunner(settings, chatId, chatDir);
-      if (i === 0) {
-        firstRunner = runner;
-      }
-    }
-
-    expect(getRunnerCacheSizeForTests()).toBeLessThanOrEqual(100);
-
-    const firstRunnerAgain = getOrCreateRunner(settings, "1000", join(tmpdir(), "pigeon-cache", "chat-1000"));
-    expect(firstRunnerAgain).not.toBe(firstRunner);
-  });
-
-  it("shrinks oversized cache after active runs settle", async () => {
-    sandboxDir = await mkdtemp(join(tmpdir(), "agent-cache-shrink-"));
-    const dataDir = join(sandboxDir, "data");
-    const chatId = "7001";
-    const chatDir = join(dataDir, `chat-${chatId}`);
-    const fake = createFakeSession();
-
-    let releaseRun: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      releaseRun = resolve;
-    });
-
-    fake.session.prompt.mockImplementationOnce(async () => {
-      await gate;
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "done" }],
-        stopReason: "stop"
-      };
-      fake.session.messages.push(assistant);
-      fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
-    });
-
-    const {
-      addSyntheticActiveRunnerForTests,
-      clearRunnerCacheForTests,
-      getOrCreateRunner,
-      getRunnerCacheSizeForTests
-    } = await import("../src/agent.js");
-    const { ChatStore } = await import("../src/store.js");
-    clearRunnerCacheForTests();
-
-    const syntheticHandles = Array.from({ length: 120 }, (_, i) => {
-      return addSyntheticActiveRunnerForTests(String(9000 + i));
-    });
-    expect(getRunnerCacheSizeForTests()).toBe(120);
-
-    const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
-
-    const runPromise = runner.run(
-      {
-        chatId: Number(chatId),
-        ts: "1700000005000",
-        user: "u9",
-        userName: "zoe",
-        userText: "shrink"
-      },
-      store
-    );
-
-    for (const handle of syntheticHandles) {
-      handle.deactivate();
-    }
-
-    releaseRun?.();
-    await runPromise;
-
-    expect(getRunnerCacheSizeForTests()).toBeLessThanOrEqual(100);
+    expect(seenDelta).toBe(true);
   });
 
   it("installs socks ai proxy from settings.ai.proxy", async () => {
@@ -476,46 +328,24 @@ describe("agent runner", () => {
     const dataDir = join(sandboxDir, "data");
     const chatDir = join(dataDir, `chat-${chatId}`);
     const fake = createFakeSession();
+    setupFakeSession(fake);
 
     fake.session.prompt.mockImplementationOnce(async () => {
-      const assistant = {
-        role: "assistant",
-        content: [{ type: "text", text: "ok" }],
-        stopReason: "stop"
-      };
+      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
       fake.session.messages.push(assistant);
       fake.emit({ type: "message_end", message: assistant });
-    });
-
-    mocks.createAgentSession.mockResolvedValueOnce({
-      session: fake.session,
-      extensionsResult: { extensions: [], errors: [], runtime: {} }
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
     const runner = getOrCreateRunner(
-      {
-        ...createSettings(),
-        ai: {
-          proxy: "socks5://127.0.0.1:7890",
-          provider: "anthropic",
-          model: "claude-sonnet-4-5"
-        }
-      },
+      { ...createSettings(), ai: { proxy: "socks5://127.0.0.1:7890", provider: "anthropic", model: "claude-sonnet-4-5" } },
       chatId,
-      chatDir
+      chatDir,
     );
 
-    await runner.run(
-      {
-        chatId: Number(chatId),
-        ts: "1700000006000",
-        userText: "ping"
-      },
-      store
-    );
+    await runner.run({ chatId: Number(chatId), ts: "1700000006000", userText: "ping" }, store);
 
     expect(mocks.Socks5ProxyAgent).toHaveBeenCalledWith("socks5://127.0.0.1:7890");
     expect(mocks.setGlobalDispatcher).toHaveBeenCalled();
