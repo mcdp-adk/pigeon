@@ -391,9 +391,8 @@ describe("start", () => {
     expect(formatStartReply(message, "pigeon-bot", true)).toEqual({
       kind: "html",
       text: [
-        "<b>Hello from pigeon-bot.</b>",
-        "This chat is enabled.",
-        "Send a message to start, or use <code>/help</code> to see available commands."
+        "<b>🐦 Pigeon 已就绪</b>\n",
+        "当前会话已启用。发送消息开始，或使用 /help 查看可用命令。"
       ].join("\n")
     });
   });
@@ -408,11 +407,10 @@ describe("start", () => {
     expect(formatStartReply(message, "pigeon-bot", false)).toEqual({
       kind: "html",
       text: [
-        "<b>Hello from pigeon-bot.</b>",
-        "This chat is not enabled yet.",
-        "Ask the operator to add <code>chat.id=2097986184</code> to <code>settings.json</code>:",
-        '<code>"telegram": { "allowed_chats": { "2097986184": {} } }</code>',
-        "After that, send a message or use <code>/help</code>."
+        "<b>🔒 未授权访问</b>\n",
+        `当前会话尚未启用。请联系管理员在 <code>settings.json</code> 中添加：\n`,
+        `<pre>"allowed_chats": {\n  "2097986184": {}\n}</pre>\n`,
+        `当前聊天的 ID 为 <code>2097986184</code>。`
       ].join("\n")
     });
   });
@@ -423,8 +421,8 @@ describe("start", () => {
     const reply = formatStartReply(message, "pigeon-bot", false);
 
     expect(reply.kind).toBe("html");
-    expect(reply.text).toContain("start_payload=<code>ticket-42</code>");
-    expect(reply.text).toContain("This chat is not enabled yet.");
+    expect(reply.text).toContain("start_payload: <code>ticket-42</code>");
+    expect(reply.text).toContain("当前会话尚未启用");
   });
 
   it("escapes user-controlled payload in /start html", () => {
@@ -436,17 +434,18 @@ describe("start", () => {
     const reply = formatStartReply(message, "pigeon-bot", false);
 
     expect(reply.kind).toBe("html");
-    expect(reply.text).toContain("start_payload=<code>&lt;tag&gt;&amp;</code>");
+    expect(reply.text).toContain("start_payload: <code>&lt;tag&gt;&amp;</code>");
   });
 
   it("formats /help reply", () => {
     expect(formatHelpReply("pigeon-bot")).toEqual({
       kind: "html",
       text: [
-        "<b>Available commands for pigeon-bot:</b>",
-        "<code>/start</code> - Start Pigeon",
-        "<code>/help</code> - Show available commands",
-        "<code>/stop</code> - Stop the current task"
+        `<b>🐦 Pigeon</b>\n`,
+        "<code>/start</code> — 启动 Pigeon",
+        "<code>/help</code> — 查看可用命令",
+        "<code>/stop</code> — 停止当前任务",
+        `\n直接发送消息即可与 AI 对话。`
       ].join("\n")
     });
   });

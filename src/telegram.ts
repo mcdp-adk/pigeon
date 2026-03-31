@@ -119,15 +119,15 @@ export type TelegramReply =
 export const SYSTEM_COMMANDS = [
   {
     command: "start",
-    description: "Start Pigeon"
+    description: "启动 Pigeon"
   },
   {
     command: "help",
-    description: "Show available commands"
+    description: "查看可用命令"
   },
   {
     command: "stop",
-    description: "Stop the current task"
+    description: "停止当前任务"
   }
 ] as const;
 
@@ -494,25 +494,25 @@ export const formatStartReply = (
   isAuthorized: boolean
 ): TelegramReply => {
   const command = extractCommand(message);
-  const lines = [`<b>Hello from ${escapeHtml(botName)}.</b>`];
+  const lines = [];
 
   if (isAuthorized) {
     lines.push(
-      "This chat is enabled.",
-      `Send a message to start, or use ${code("/help")} to see available commands.`
+      "<b>🐦 Pigeon 已就绪</b>\n",
+      "当前会话已启用。发送消息开始，或使用 /help 查看可用命令。"
     );
   } else {
-    const chatId = String(message.chat.id);
+    const chatId = escapeHtml(String(message.chat.id));
     lines.push(
-      "This chat is not enabled yet.",
-      `Ask the operator to add ${code(`chat.id=${chatId}`)} to ${code("settings.json")}:`,
-      code(`"telegram": { "allowed_chats": { "${chatId}": {} } }`),
-      `After that, send a message or use ${code("/help")}.`
+      "<b>🔒 未授权访问</b>\n",
+      `当前会话尚未启用。请联系管理员在 <code>settings.json</code> 中添加：\n`,
+      `<pre>"allowed_chats": {\n  "${chatId}": {}\n}</pre>\n`,
+      `当前聊天的 ID 为 <code>${chatId}</code>。`
     );
   }
 
   if (command.commandName === "start" && command.commandArgs) {
-    lines.push(`start_payload=${code(command.commandArgs)}`);
+    lines.push(`\nstart_payload: <code>${escapeHtml(command.commandArgs)}</code>`);
   }
 
   return htmlReply(lines.join("\n"));
@@ -521,8 +521,9 @@ export const formatStartReply = (
 export const formatHelpReply = (botName: string): TelegramReply => {
   return htmlReply(
     [
-      `<b>Available commands for ${escapeHtml(botName)}:</b>`,
-      ...SYSTEM_COMMANDS.map((command) => `${code(`/${command.command}`)} - ${escapeHtml(command.description)}`)
+      `<b>🐦 Pigeon</b>\n`,
+      ...SYSTEM_COMMANDS.map((command) => `<code>/${command.command}</code> — ${escapeHtml(command.description)}`),
+      `\n直接发送消息即可与 AI 对话。`
     ].join("\n")
   );
 };
@@ -537,7 +538,8 @@ export interface TelegramResponseContext {
 
 export const createResponseContext = (ctx: Context): TelegramResponseContext => {
   let messageId: number | undefined;
-  let progressText = "<i>⏳ 正在处理...</i>";
+  let progressText = "<b>⏳ 正在处理</b>";
+  let hasProgressUpdates = false;
   let lastProgressEdit = 0;
   let pendingProgressTimeout: NodeJS.Timeout | undefined;
 
@@ -571,7 +573,8 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
   const flushProgress = async (): Promise<void> => {
     if (pendingProgressTimeout) { clearTimeout(pendingProgressTimeout); pendingProgressTimeout = undefined; }
     lastProgressEdit = Date.now();
-    await doEdit(progressText);
+    const textToEdit = hasProgressUpdates ? `${progressText}</blockquote>` : progressText;
+    await doEdit(textToEdit);
   };
 
   const flushStream = async (): Promise<void> => {
@@ -594,7 +597,12 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
 
     async updateProgress(label: string) {
       if (!messageId || inStreamingMode) return;
-      progressText += `\n→ ${label}`;
+      if (!hasProgressUpdates) {
+        progressText += `\n\n<blockquote>→ ${escapeHtml(label)}`;
+        hasProgressUpdates = true;
+      } else {
+        progressText += `\n→ ${escapeHtml(label)}`;
+      }
       const timeSince = Date.now() - lastProgressEdit;
       if (timeSince >= EDIT_INTERVAL_MS) {
         await flushProgress();
@@ -609,7 +617,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
         inStreamingMode = true;
         cancelPending();
         streamingText = "";
-        await doEdit("<i>...</i>");
+        await doEdit("▌");
       }
       streamingText += delta;
       const timeSince = Date.now() - lastStreamEdit;
@@ -637,7 +645,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
     async markStopped() {
       cancelPending();
       if (!messageId) return;
-      await doEdit("<i>已停止。</i>");
+      await doEdit("<b>⏹ 已停止</b>");
     }
   };
 };

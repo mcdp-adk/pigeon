@@ -21,7 +21,7 @@ describe("TelegramResponseContext", () => {
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
 
-    expect(replyMock).toHaveBeenCalledWith("<i>⏳ 正在处理...</i>", { parse_mode: "HTML" });
+    expect(replyMock).toHaveBeenCalledWith("<b>⏳ 正在处理</b>", { parse_mode: "HTML" });
   });
 
   it("updateProgress 在 1 秒内合并多次更新", async () => {
@@ -37,7 +37,7 @@ describe("TelegramResponseContext", () => {
     await responseCtx.sendInitial();
 
     await responseCtx.updateProgress("步骤 1");
-    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>⏳ 正在处理...</i>\n→ 步骤 1", { parse_mode: "HTML" });
+    expect(editMock).toHaveBeenCalledWith(456, 123, "<b>⏳ 正在处理</b>\n\n<blockquote>→ 步骤 1</blockquote>", { parse_mode: "HTML" });
     editMock.mockClear();
 
     await responseCtx.updateProgress("步骤 2");
@@ -48,7 +48,7 @@ describe("TelegramResponseContext", () => {
     expect(editMock).toHaveBeenCalledWith(
       456,
       123,
-      "<i>⏳ 正在处理...</i>\n→ 步骤 1\n→ 步骤 2\n→ 步骤 3",
+      "<b>⏳ 正在处理</b>\n\n<blockquote>→ 步骤 1\n→ 步骤 2\n→ 步骤 3</blockquote>",
       { parse_mode: "HTML" },
     );
   });
@@ -98,7 +98,7 @@ describe("TelegramResponseContext", () => {
     editMock.mockClear();
 
     await responseCtx.appendDelta("你");
-    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>...</i>", { parse_mode: "HTML" });
+    expect(editMock).toHaveBeenCalledWith(456, 123, "▌", { parse_mode: "HTML" });
     editMock.mockClear();
 
     await responseCtx.appendDelta("好");
@@ -144,6 +144,6 @@ describe("TelegramResponseContext", () => {
     await responseCtx.sendInitial();
     await responseCtx.markStopped();
 
-    expect(editMock).toHaveBeenCalledWith(456, 123, "<i>已停止。</i>", { parse_mode: "HTML" });
+    expect(editMock).toHaveBeenCalledWith(456, 123, "<b>⏹ 已停止</b>", { parse_mode: "HTML" });
   });
 });
