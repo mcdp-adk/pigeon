@@ -1,124 +1,102 @@
-# Pigeon M2 最小配置
+# Pigeon
 
-## 1. `.env`
+一个 Telegram-first 的个人 agent 宿主。
 
-复制模板：
+## 命令
+
+| 命令 | 说明 |
+|------|------|
+| `/start` | 显示当前状态 |
+| `/help` | 显示可用命令 |
+| `/stop` | 停止当前任务 |
+
+直接发送消息即可与 AI 对话。
+
+## 配置
+
+需要 `TELEGRAM_BOT_TOKEN` + 至少一个 AI provider 的 API key。
+
+### `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-必填：
+当前仅支持 env var 认证，不支持 OAuth。
 
-- `TELEGRAM_BOT_TOKEN`
-- 当前 `ai.provider` 对应的 API key
+| 环境变量 | `ai.provider` | 备注 |
+|---------|---------------|------|
+| `TELEGRAM_BOT_TOKEN` | — | 必须，从 @BotFather 获取 |
+| `OPENAI_API_KEY` | `openai` | |
+| `ANTHROPIC_API_KEY` | `anthropic` | |
+| `ANTHROPIC_OAUTH_TOKEN` | `anthropic` | 优先级高于 API key |
+| `GEMINI_API_KEY` | `google` | Google AI Studio |
+| `GOOGLE_CLOUD_API_KEY` | `google-vertex` | 或用 ADC，需 `GOOGLE_CLOUD_PROJECT` + `GOOGLE_CLOUD_LOCATION` |
+| `AZURE_OPENAI_API_KEY` | `azure-openai-responses` | 需额外 `AZURE_OPENAI_BASE_URL` 或 `AZURE_OPENAI_RESOURCE_NAME` |
+| `MISTRAL_API_KEY` | `mistral` | |
+| `GROQ_API_KEY` | `groq` | |
+| `CEREBRAS_API_KEY` | `cerebras` | |
+| `XAI_API_KEY` | `xai` | |
+| `OPENROUTER_API_KEY` | `openrouter` | |
+| `KIMI_API_KEY` | `kimi-coding` | 月之暗面 Kimi，Anthropic-compatible API，非 Moonshot OpenAI 格式 |
+| `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` | |
+| `ZAI_API_KEY` | `zai` | 智谱 |
+| `MINIMAX_API_KEY` | `minimax` | |
+| `MINIMAX_CN_API_KEY` | `minimax-cn` | 国内 endpoint |
+| `HF_TOKEN` | `huggingface` | |
+| `OPENCODE_API_KEY` | `opencode` / `opencode-go` | |
+| `COPILOT_GITHUB_TOKEN` | `github-copilot` | 也接受 `GH_TOKEN` / `GITHUB_TOKEN` |
+| AWS 凭证 | `amazon-bedrock` | 支持 `AWS_PROFILE`、IAM key、Bearer Token、ECS/IRSA 等 |
 
-常用映射：
-
-| `ai.provider` | `.env` 变量 |
-| --- | --- |
-| `openai` | `OPENAI_API_KEY` |
-| `anthropic` | `ANTHROPIC_API_KEY` 或 `ANTHROPIC_OAUTH_TOKEN` |
-| `google` | `GEMINI_API_KEY` |
-| `openrouter` | `OPENROUTER_API_KEY` |
-| `kimi-coding` | `KIMI_API_KEY` |
-
-示例：
-
-```bash
-TELEGRAM_BOT_TOKEN=your_bot_token
-OPENROUTER_API_KEY=your_openrouter_key
-KIMI_API_KEY=your_kimi_key
-```
-
-## 2. `settings.json`
-
-复制模板：
+### `settings.json`
 
 ```bash
 cp settings.example.json settings.json
 ```
 
-当前结构：
+| 配置项 | 说明 |
+|--------|------|
+| `telegram.proxy` | Telegram Bot API 代理（如 `socks5://127.0.0.1:7890`） |
+| `telegram.explicit_only` | `true` = 只响应 @提及 / 回复 / 命令；`false` = 响应所有消息 |
+| `telegram.allowed_chats` | 白名单，key 为 chat ID，value 为 `{}` 或 `{ "explicit_only": bool }` 覆盖全局 |
+| `ai.proxy` | AI provider 代理 |
+| `ai.provider` | 对应上表 `ai.provider` 列 |
+| `ai.model` | 模型名称，取决于 provider |
+| `sandbox` | `"host"` 或 `"docker:容器名"` |
 
-```json
-{
-  "$schema": "./settings.schema.json",
-  "telegram": {
-    "proxy": "socks5://127.0.0.1:7890",
-    "explicit_only": true,
-    "allowed_chats": {
-      "CHAT_ID_HERE": {}
-    }
-  },
-  "ai": {
-    "proxy": "",
-    "provider": "openrouter",
-    "model": "openai/gpt-5.4-mini"
-  },
-  "sandbox": "host"
-}
-```
-
-必须理解这几个字段：
-
-- `telegram.proxy`：只给 Telegram Bot API 用
-- `ai.proxy`：只给 AI provider 出站请求用
-- `ai.provider` / `ai.model`：当前启用的模型
-- `sandbox`：M2 默认用 `host`
-
-不要把 `TELEGRAM_BOT_TOKEN` 写进 `settings.json`。
-
-## 3. `ai.proxy` 什么时候填
-
-- `Kimi` 当前验证可直连：可以保持 `"proxy": ""`
-- `OpenRouter` 当前环境需要代理：应显式填代理 URL
-
-例如：
-
-```json
-"ai": {
-  "proxy": "socks5://127.0.0.1:7890",
-  "provider": "openrouter",
-  "model": "openai/gpt-5.4-mini"
-}
-```
-
-如果切到 Kimi：
-
-```json
-"ai": {
-  "proxy": "",
-  "provider": "kimi-coding",
-  "model": "k2p5"
-}
-```
-
-## 4. 启动
+## 启动
 
 ```bash
 npm install
 npm start
 ```
 
-正常启动日志应包含：
-
-```text
-[pigeon] Telegram bot initialized ...
-[pigeon] Registered Telegram commands commands=start,help,stop
-[pigeon] Telegram host started ...
-```
-
-## 5. 最常见错误
-
-### `Missing TELEGRAM_BOT_TOKEN environment variable`
-
-说明项目根目录 `.env` 没有被正确读取，或者没有这行：
+## 示例
 
 ```bash
-TELEGRAM_BOT_TOKEN=...
+# .env
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+KIMI_API_KEY=sk-...
 ```
 
-### provider 改了但 key 没改
+```jsonc
+// settings.json
+{
+  "$schema": "./settings.schema.json",
+  "telegram": {
+    "proxy": "",
+    "explicit_only": true,
+    "allowed_chats": { "123456789": {} }
+  },
+  "ai": {
+    "proxy": "",
+    "provider": "kimi-coding",
+    "model": "k2p5"
+  },
+  "sandbox": "host"
+}
+```
 
-例如把 `ai.provider` 改成 `kimi-coding`，但 `.env` 里没有 `KIMI_API_KEY`，就一定会失败。
+```bash
+npm start
+```
