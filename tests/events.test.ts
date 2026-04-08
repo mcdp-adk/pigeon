@@ -60,7 +60,7 @@ describe("EventsWatcher", () => {
 		expect(triggered[0]!.text).toBe("[EVENT:remind.json:immediate:immediate] check inbox");
 	});
 
-	it("one-shot 过期事件删除不触发", async () => {
+	it("one-shot 过期事件立即执行并删除", async () => {
 		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
 		const eventsDir = join(sandboxDir, "events");
 
@@ -75,7 +75,8 @@ describe("EventsWatcher", () => {
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		watcher.stop();
 
-		expect(triggered).toHaveLength(0);
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]!.text).toContain("past event");
 		expect(existsSync(filePath)).toBe(false);
 	});
 
@@ -201,5 +202,64 @@ describe("EventsWatcher", () => {
 		watcher.stop();
 
 		expect(existsSync(filePath)).toBe(true);
+	});
+
+	it("immediate 事件 busy 后重启 watcher 仍能恢复送达", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const watcher1 = new EventsWatcher(eventsDir, () => false);
+		watcher1.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const filePath = join(eventsDir, "recover.json");
+		await writeFile(filePath, JSON.stringify({ type: "immediate", chatId: "123", text: "recover me" }));
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		watcher1.stop();
+
+		expect(existsSync(filePath)).toBe(true);
+
+		const triggered: { chatId: string; text: string }[] = [];
+		const watcher2 = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
+		watcher2.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		watcher2.stop();
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]!.text).toContain("recover me");
+		expect(existsSync(filePath)).toBe(false);
+	});
+
+	it("one-shot 事件 busy 后重启 watcher 仍能恢复送达", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const watcher1 = new EventsWatcher(eventsDir, () => false);
+		watcher1.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const futureTime = new Date(Date.now() + 200).toISOString();
+		const filePath = join(eventsDir, "recover-oneshot.json");
+		await writeFile(filePath, JSON.stringify({ type: "one-shot", chatId: "123", text: "recover oneshot", at: futureTime }));
+
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		watcher1.stop();
+
+		expect(existsSync(filePath)).toBe(true);
+
+		const triggered: { chatId: string; text: string }[] = [];
+		const watcher2 = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
+		watcher2.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		watcher2.stop();
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]!.text).toContain("recover oneshot");
+		expect(existsSync(filePath)).toBe(false);
 	});
 });

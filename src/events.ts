@@ -1,5 +1,5 @@
 import { Cron } from "croner";
-import { existsSync, type FSWatcher, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
+import { existsSync, type FSWatcher, mkdirSync, readdirSync, unlinkSync, watch } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -49,16 +49,13 @@ export class EventsWatcher {
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private crons: Map<string, Cron> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
-  private startTime: number;
   private watcher: FSWatcher | null = null;
   private knownFiles: Set<string> = new Set();
 
   constructor(
     private readonly eventsDir: string,
     private readonly onTrigger: (event: EventTrigger) => boolean
-  ) {
-    this.startTime = Date.now();
-  }
+  ) {}
 
   start(): void {
     if (!existsSync(this.eventsDir)) {
@@ -228,17 +225,6 @@ export class EventsWatcher {
   }
 
   private handleImmediate(filename: string, event: ImmediateEvent): void {
-    const filePath = join(this.eventsDir, filename);
-    try {
-      const stat = statSync(filePath);
-      if (stat.mtimeMs < this.startTime) {
-        logInfo("Stale immediate event, deleting", { filename });
-        this.deleteFile(filename);
-        return;
-      }
-    } catch {
-      return;
-    }
     logInfo("Executing immediate event", { filename });
     this.execute(filename, event);
   }
@@ -252,8 +238,8 @@ export class EventsWatcher {
     }
     const now = Date.now();
     if (atTime <= now) {
-      logInfo("One-shot event in the past, deleting", { filename });
-      this.deleteFile(filename);
+      logInfo("Executing overdue one-shot event", { filename });
+      this.execute(filename, event);
       return;
     }
     const delay = atTime - now;
