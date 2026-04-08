@@ -536,6 +536,19 @@ export interface TelegramResponseContext {
   markStopped(): Promise<void>;
 }
 
+export const TELEGRAM_MAX_LENGTH = 4096;
+
+export const splitText = (text: string): string[] => {
+  if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
+  const parts: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    parts.push(remaining.slice(0, TELEGRAM_MAX_LENGTH));
+    remaining = remaining.slice(TELEGRAM_MAX_LENGTH);
+  }
+  return parts;
+};
+
 export const createResponseContext = (ctx: Context): TelegramResponseContext => {
   let messageId: number | undefined;
   let progressText = "<b>⏳ 正在处理</b>";
@@ -549,19 +562,6 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
   let pendingStreamTimeout: NodeJS.Timeout | undefined;
 
   const EDIT_INTERVAL_MS = 1000;
-
-  const TELEGRAM_MAX_LENGTH = 4096;
-
-  const splitText = (text: string): string[] => {
-    if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
-    const parts: string[] = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      parts.push(remaining.slice(0, TELEGRAM_MAX_LENGTH));
-      remaining = remaining.slice(TELEGRAM_MAX_LENGTH);
-    }
-    return parts;
-  };
 
   const doEdit = async (text: string): Promise<void> => {
     if (!messageId) return;

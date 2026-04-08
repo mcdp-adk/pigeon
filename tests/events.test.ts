@@ -119,4 +119,50 @@ describe("EventsWatcher", () => {
 		expect(triggered).toHaveLength(0);
 		expect(existsSync(filePath)).toBe(true);
 	});
+
+	it("one-shot 未来事件到点触发并删除文件", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const triggered: { chatId: string; text: string }[] = [];
+		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		watcher.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const futureTime = new Date(Date.now() + 500).toISOString();
+		const filePath = join(eventsDir, "future.json");
+		await writeFile(filePath, JSON.stringify({ type: "one-shot", chatId: "789", text: "wake up", at: futureTime }));
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(triggered).toHaveLength(0);
+
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		watcher.stop();
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]!.text).toContain("[EVENT:future.json:one-shot:");
+		expect(triggered[0]!.text).toContain("wake up");
+		expect(existsSync(filePath)).toBe(false);
+	});
+
+	it("one-shot 非法 'at' 时间戳被拒绝并删除", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const triggered: { chatId: string; text: string }[] = [];
+		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		watcher.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const filePath = join(eventsDir, "bad-time.json");
+		await writeFile(filePath, JSON.stringify({ type: "one-shot", chatId: "123", text: "bad", at: "not-a-date" }));
+
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		watcher.stop();
+
+		expect(triggered).toHaveLength(0);
+		expect(existsSync(filePath)).toBe(false);
+	});
 });

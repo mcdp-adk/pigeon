@@ -20,6 +20,7 @@ import {
   formatStartReply,
   getMessageHandlingDecision,
   isChatAllowed,
+  splitText,
   type TelegramResponseContext,
   type TelegramReply,
   type TelegramMessage
@@ -400,6 +401,8 @@ export const startTelegramHost = async () => {
     activeRuns.add(runPromise);
   });
 
+  const SILENT_MARKER = "[SILENT]";
+
   const fireEventForChat = (chatId: string, text: string): void => {
     if (!isChatAllowed(Number(chatId), settings.telegram.allowed_chats)) {
       logWarning("Event fired for unauthorized chat, discarding", { chat_id: chatId });
@@ -424,6 +427,13 @@ export const startTelegramHost = async () => {
           state.store
         );
         logInfo("Event run completed", { chat_id: chatId, stop_reason: result.stopReason });
+
+        const reply = result.reply.trim();
+        if (reply !== "" && reply !== SILENT_MARKER) {
+          for (const part of splitText(reply)) {
+            await bot.api.sendMessage(Number(chatId), part, { parse_mode: "HTML" });
+          }
+        }
       } catch (error: unknown) {
         logError("Event run failed", error);
       } finally {

@@ -245,6 +245,11 @@ export class EventsWatcher {
 
   private handleOneShot(filename: string, event: OneShotEvent): void {
     const atTime = new Date(event.at).getTime();
+    if (!Number.isFinite(atTime)) {
+      logWarning("Invalid 'at' timestamp for one-shot event, deleting", { filename, at: event.at });
+      this.deleteFile(filename);
+      return;
+    }
     const now = Date.now();
     if (atTime <= now) {
       logInfo("One-shot event in the past, deleting", { filename });
