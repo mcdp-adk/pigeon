@@ -7,7 +7,8 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 
 import { getOrCreateRunner, type AgentRunner, type AgentRunEvent } from "./agent.js";
-import { logError, logInfo } from "./log.js";
+import { createEventsWatcher } from "./events.js";
+import { logError, logInfo, logWarning } from "./log.js";
 import { getChatPolicy, loadSettings, type Settings } from "./settings.js";
 import { ChatStore } from "./store.js";
 import {
@@ -399,7 +400,50 @@ export const startTelegramHost = async () => {
     activeRuns.add(runPromise);
   });
 
+  const fireEventForChat = (chatId: string, text: string): void => {
+    if (!isChatAllowed(Number(chatId), settings.telegram.allowed_chats)) {
+      logWarning("Event fired for unauthorized chat, discarding", { chat_id: chatId });
+      return;
+    }
+
+    const state = getOrCreateChatState(Number(chatId), settings);
+    if (state.running) {
+      logWarning("Event fired but chat is busy, discarding", { chat_id: chatId });
+      return;
+    }
+
+    const ts = String(Date.now());
+    state.running = true;
+    state.stopRequested = false;
+
+    let runPromise!: Promise<void>;
+    runPromise = (async () => {
+      try {
+        const result = await state.runner.run(
+          { chatId: Number(chatId), userText: text, ts, user: "EVENT" },
+          state.store
+        );
+        logInfo("Event run completed", { chat_id: chatId, stop_reason: result.stopReason });
+      } catch (error: unknown) {
+        logError("Event run failed", error);
+      } finally {
+        state.running = false;
+        state.stopRequested = false;
+        state.responseCtx = undefined;
+        activeRuns.delete(runPromise);
+      }
+    })();
+
+    activeRuns.add(runPromise);
+  };
+
+  const eventsWatcher = createEventsWatcher(DATA_DIR, ({ chatId, text }) => {
+    fireEventForChat(chatId, text);
+  });
+  eventsWatcher.start();
+
   const shutdown = async () => {
+    eventsWatcher.stop();
     bot.stop();
     for (const [, state] of chatStates) {
       if (state.running) {

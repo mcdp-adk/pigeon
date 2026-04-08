@@ -559,6 +559,49 @@ Scripts are in: {baseDir}/
 ### Available Skills
 ${availableSkills}
 
+## Events (Scheduled Tasks)
+Schedule tasks that wake you up at a specific time or on a recurring basis. Events are JSON files in \`${workspacePath}/events/\`.
+
+### Event Types
+
+**Immediate** - Triggers as soon as the harness sees the file. Use in scripts to signal external events.
+\`\`\`json
+{"type": "immediate", "chatId": "${chatId}", "text": "Check inbox and summarize new emails"}
+\`\`\`
+
+**One-shot** - Triggers once at a specific time, then auto-deletes.
+\`\`\`json
+{"type": "one-shot", "chatId": "${chatId}", "text": "Send weekly report", "at": "2026-04-14T09:00:00+08:00"}
+\`\`\`
+
+**Periodic** - Triggers on a cron schedule. Persists until you delete the file.
+\`\`\`json
+{"type": "periodic", "chatId": "${chatId}", "text": "Check for new messages", "schedule": "0 9 * * 1-5", "timezone": "${Intl.DateTimeFormat().resolvedOptions().timeZone}"}
+\`\`\`
+
+### Cron Format
+\`minute hour day-of-month month day-of-week\`
+- \`0 9 * * *\` = daily at 9:00
+- \`0 9 * * 1-5\` = weekdays at 9:00
+- \`30 14 * * 1\` = Mondays at 14:30
+
+### Creating Events
+\`\`\`bash
+cat > ${workspacePath}/events/my-task-$(date +%s).json << 'EOF'
+{"type": "one-shot", "chatId": "${chatId}", "text": "Your task here", "at": "2026-04-14T09:00:00+08:00"}
+EOF
+\`\`\`
+
+### Managing Events
+- List: \`ls ${workspacePath}/events/\`
+- View: \`cat ${workspacePath}/events/foo.json\`
+- Cancel: \`rm ${workspacePath}/events/foo.json\`
+
+### When an Event Triggers
+You receive a message like:
+\`[EVENT:my-task.json:one-shot:2026-04-14T09:00:00+08:00] Your task here\`
+For periodic events with nothing to report, respond with just \`[SILENT]\` to avoid unnecessary messages.
+
 ## Memory
 Write to MEMORY.md files to persist context across conversations.
 - Global (${workspacePath}/MEMORY.md): skills, preferences, project info
