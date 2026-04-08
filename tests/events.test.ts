@@ -20,7 +20,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -44,7 +44,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -65,7 +65,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		const pastTime = new Date(Date.now() - 60000).toISOString();
@@ -84,7 +84,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -104,7 +104,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		const filePath = join(eventsDir, "periodic.json");
@@ -125,7 +125,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -151,7 +151,7 @@ describe("EventsWatcher", () => {
 		const eventsDir = join(sandboxDir, "events");
 
 		const triggered: { chatId: string; text: string }[] = [];
-		const watcher = new EventsWatcher(eventsDir, (e) => triggered.push(e));
+		const watcher = new EventsWatcher(eventsDir, (e) => { triggered.push(e); return true; });
 		watcher.start();
 
 		await new Promise((resolve) => setTimeout(resolve, 50));
@@ -164,5 +164,42 @@ describe("EventsWatcher", () => {
 
 		expect(triggered).toHaveLength(0);
 		expect(existsSync(filePath)).toBe(false);
+	});
+
+	it("immediate 事件被拒绝时保留文件", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const watcher = new EventsWatcher(eventsDir, () => false);
+		watcher.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const filePath = join(eventsDir, "busy.json");
+		await writeFile(filePath, JSON.stringify({ type: "immediate", chatId: "123", text: "busy test" }));
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		watcher.stop();
+
+		expect(existsSync(filePath)).toBe(true);
+	});
+
+	it("one-shot 事件被拒绝时保留文件", async () => {
+		sandboxDir = await mkdtemp(join(tmpdir(), "events-test-"));
+		const eventsDir = join(sandboxDir, "events");
+
+		const watcher = new EventsWatcher(eventsDir, () => false);
+		watcher.start();
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const futureTime = new Date(Date.now() + 300).toISOString();
+		const filePath = join(eventsDir, "busy-oneshot.json");
+		await writeFile(filePath, JSON.stringify({ type: "one-shot", chatId: "123", text: "busy oneshot", at: futureTime }));
+
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		watcher.stop();
+
+		expect(existsSync(filePath)).toBe(true);
 	});
 });

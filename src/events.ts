@@ -55,7 +55,7 @@ export class EventsWatcher {
 
   constructor(
     private readonly eventsDir: string,
-    private readonly onTrigger: (event: EventTrigger) => void
+    private readonly onTrigger: (event: EventTrigger) => boolean
   ) {
     this.startTime = Date.now();
   }
@@ -296,7 +296,12 @@ export class EventsWatcher {
     }
 
     const text = `[EVENT:${filename}:${event.type}:${scheduleInfo}] ${event.text}`;
-    this.onTrigger({ chatId: event.chatId, text });
+    const accepted = this.onTrigger({ chatId: event.chatId, text });
+
+    if (!accepted) {
+      logWarning("Event not accepted (chat busy), retaining file", { filename });
+      return;
+    }
 
     if (deleteAfter) {
       this.deleteFile(filename);
@@ -322,7 +327,7 @@ export class EventsWatcher {
 
 export function createEventsWatcher(
   dataDir: string,
-  onTrigger: (event: EventTrigger) => void
+  onTrigger: (event: EventTrigger) => boolean
 ): EventsWatcher {
   return new EventsWatcher(join(dataDir, "events"), onTrigger);
 }

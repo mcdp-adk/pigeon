@@ -403,16 +403,16 @@ export const startTelegramHost = async () => {
 
   const SILENT_MARKER = "[SILENT]";
 
-  const fireEventForChat = (chatId: string, text: string): void => {
+  const fireEventForChat = (chatId: string, text: string): boolean => {
     if (!isChatAllowed(Number(chatId), settings.telegram.allowed_chats)) {
       logWarning("Event fired for unauthorized chat, discarding", { chat_id: chatId });
-      return;
+      return true;
     }
 
     const state = getOrCreateChatState(Number(chatId), settings);
     if (state.running) {
-      logWarning("Event fired but chat is busy, discarding", { chat_id: chatId });
-      return;
+      logWarning("Event fired but chat is busy, rejecting", { chat_id: chatId });
+      return false;
     }
 
     const ts = String(Date.now());
@@ -445,10 +445,11 @@ export const startTelegramHost = async () => {
     })();
 
     activeRuns.add(runPromise);
+    return true;
   };
 
   const eventsWatcher = createEventsWatcher(DATA_DIR, ({ chatId, text }) => {
-    fireEventForChat(chatId, text);
+    return fireEventForChat(chatId, text);
   });
   eventsWatcher.start();
 
