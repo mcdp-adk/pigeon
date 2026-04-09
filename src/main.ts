@@ -385,7 +385,7 @@ export const startTelegramHost = async () => {
           await responseCtx.appendDelta(event.delta);
           return;
         }
-        if (event.type === "compaction_start") {
+        if (event.type === "compaction_start" && event.reason === "overflow") {
           await responseCtx.updateProgress("压缩上下文...");
           return;
         }

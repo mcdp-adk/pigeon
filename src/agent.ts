@@ -37,7 +37,7 @@ export type AgentRunEvent =
   | { type: "tool_start"; toolName: string; label: string }
   | { type: "tool_end"; toolName: string; label: string; isError: boolean }
   | { type: "text_delta"; delta: string }
-  | { type: "compaction_start" }
+  | { type: "compaction_start"; reason: "threshold" | "overflow" }
   | { type: "retry"; attempt: number; maxAttempts: number };
 
 export interface AgentRunResult {
@@ -235,10 +235,9 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       runState.lastAssistant = event.message as AssistantMessage;
     } else if (event.type === "auto_compaction_start") {
-      fireOnEvent(runState, { type: "compaction_start" });
+      fireOnEvent(runState, { type: "compaction_start", reason: event.reason });
     } else if (event.type === "auto_retry_start") {
-      const e = event as { type: "auto_retry_start"; attempt: number; maxAttempts: number };
-      fireOnEvent(runState, { type: "retry", attempt: e.attempt, maxAttempts: e.maxAttempts });
+      fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
     }
   });
 
