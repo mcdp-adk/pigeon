@@ -214,7 +214,20 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     pendingEventTasks: new Set<Promise<void>>(),
     eventHandlerError: undefined as unknown,
     lastAssistant: undefined as AssistantMessage | undefined,
-    overflowRecovery: undefined as { promise: Promise<void>; resolve: () => void; retrying: boolean } | undefined,
+    overflowRecovery: undefined as {
+      promise: Promise<void>;
+      resolve: () => void;
+      deferredTimer: ReturnType<typeof setTimeout> | undefined;
+    } | undefined,
+  };
+
+  const resolveOverflow = (): void => {
+    if (!runState.overflowRecovery) return;
+    if (runState.overflowRecovery.deferredTimer !== undefined) {
+      clearTimeout(runState.overflowRecovery.deferredTimer);
+    }
+    runState.overflowRecovery.resolve();
+    runState.overflowRecovery = undefined;
   };
 
   // Subscribe to agent events once (mom pattern)
@@ -238,18 +251,15 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       const msg = event.message as AssistantMessage;
       if (runState.overflowRecovery) {
         if (msg.stopReason !== "error") {
-          runState.overflowRecovery.resolve();
-          runState.overflowRecovery = undefined;
+          resolveOverflow();
         } else {
-          // Error during recovery — might be retried by SDK. Yield a macrotask
-          // to let the SDK's agent_end handler decide (auto_retry_start or nothing).
-          const recovery = runState.overflowRecovery;
-          setTimeout(() => {
-            if (runState.overflowRecovery === recovery && !recovery.retrying) {
-              recovery.resolve();
-              runState.overflowRecovery = undefined;
-            }
-          }, 0);
+          // Error during recovery — might be retried. Yield a macrotask to let
+          // SDK's agent_end handler run. If auto_retry_start cancels this timer,
+          // recovery continues; otherwise this was a terminal error.
+          if (runState.overflowRecovery.deferredTimer !== undefined) {
+            clearTimeout(runState.overflowRecovery.deferredTimer);
+          }
+          runState.overflowRecovery.deferredTimer = setTimeout(() => resolveOverflow(), 0);
         }
       }
     } else if (event.type === "auto_compaction_start") {
@@ -258,28 +268,23 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         runState.overflowRecovery = {
           promise: new Promise<void>(r => { resolve = r; }),
           resolve,
-          retrying: false,
+          deferredTimer: undefined,
         };
       }
       fireOnEvent(runState, { type: "compaction_start", reason: event.reason });
     } else if (event.type === "auto_compaction_end") {
       if (runState.overflowRecovery && !event.willRetry) {
-        runState.overflowRecovery.resolve();
-        runState.overflowRecovery = undefined;
+        resolveOverflow();
       }
     } else if (event.type === "auto_retry_start") {
-      if (runState.overflowRecovery) {
-        runState.overflowRecovery.retrying = true;
+      if (runState.overflowRecovery?.deferredTimer !== undefined) {
+        clearTimeout(runState.overflowRecovery.deferredTimer);
+        runState.overflowRecovery.deferredTimer = undefined;
       }
       fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
     } else if (event.type === "auto_retry_end") {
-      if (runState.overflowRecovery) {
-        if (!event.success) {
-          runState.overflowRecovery.resolve();
-          runState.overflowRecovery = undefined;
-        } else {
-          runState.overflowRecovery.retrying = false;
-        }
+      if (runState.overflowRecovery && !event.success) {
+        resolveOverflow();
       }
     }
   });
@@ -375,7 +380,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         runState.active = false;
         runState.abortRequested = false;
         runState.onEvent = undefined;
-        runState.overflowRecovery = undefined;
+        resolveOverflow();
       }
     },
 

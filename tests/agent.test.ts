@@ -745,4 +745,45 @@ describe("agent runner", () => {
 
     expect(result.stopReason).toBe("error");
   });
+
+  it("handles multiple retry cycles before success", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-multi-retry-"));
+    const chatId = "90";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // Retry 1: error → retry
+        fake.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "overloaded" } });
+        fake.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 0, errorMessage: "overloaded" });
+        fake.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+        // Retry 2: error → retry
+        fake.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "overloaded" } });
+        fake.emit({ type: "auto_retry_start", attempt: 2, maxAttempts: 3, delayMs: 0, errorMessage: "overloaded" });
+        fake.emit({ type: "auto_retry_end", success: true, attempt: 2 });
+        // Final: success
+        const ok = { role: "assistant", content: [{ type: "text", text: "third time" }], stopReason: "stop" };
+        fake.session.messages.push(ok);
+        fake.emit({ type: "message_end", message: ok });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000021000",
+      userText: "multi retry test",
+    }, store);
+
+    expect(result.reply).toBe("third time");
+  });
 });
