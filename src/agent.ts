@@ -214,6 +214,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     pendingEventTasks: new Set<Promise<void>>(),
     eventHandlerError: undefined as unknown,
     lastAssistant: undefined as AssistantMessage | undefined,
+    overflowRecovery: undefined as { promise: Promise<void>; resolve: () => void } | undefined,
   };
 
   // Subscribe to agent events once (mom pattern)
@@ -234,8 +235,24 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       }
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       runState.lastAssistant = event.message as AssistantMessage;
+      if (runState.overflowRecovery) {
+        runState.overflowRecovery.resolve();
+        runState.overflowRecovery = undefined;
+      }
     } else if (event.type === "auto_compaction_start") {
+      if (event.reason === "overflow" && !runState.overflowRecovery) {
+        let resolve!: () => void;
+        runState.overflowRecovery = {
+          promise: new Promise<void>(r => { resolve = r; }),
+          resolve,
+        };
+      }
       fireOnEvent(runState, { type: "compaction_start", reason: event.reason });
+    } else if (event.type === "auto_compaction_end") {
+      if (runState.overflowRecovery && !event.willRetry) {
+        runState.overflowRecovery.resolve();
+        runState.overflowRecovery = undefined;
+      }
     } else if (event.type === "auto_retry_start") {
       fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
     }
@@ -288,6 +305,13 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         let promptError: unknown;
         try {
           await session.prompt(formatPrompt(input));
+          // Wait for overflow recovery (compaction + retry) if in progress.
+          // SDK emits auto_compaction_start synchronously before session.prompt() returns,
+          // but the actual compaction + agent.continue() runs asynchronously.
+          // We resolve overflowRecovery when a new message_end arrives or compaction ends without retry.
+          if (runState.overflowRecovery) {
+            await runState.overflowRecovery.promise;
+          }
         } catch (error: unknown) {
           promptError = error;
         }
@@ -324,6 +348,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         runState.active = false;
         runState.abortRequested = false;
         runState.onEvent = undefined;
+        runState.overflowRecovery = undefined;
       }
     },
 

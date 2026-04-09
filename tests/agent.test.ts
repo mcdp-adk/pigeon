@@ -387,6 +387,55 @@ describe("agent runner", () => {
     expect(events[0]).toEqual({ type: "compaction_start", reason: "overflow" });
   });
 
+  it("waits for overflow recovery before completing run", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-overflow-wait-"));
+    const chatId = "83";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      // Simulate SDK: auto_compaction_start fires synchronously before prompt() returns,
+      // but the actual recovery (compaction + agent.continue) completes asynchronously.
+      fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+      // prompt() returns here — recovery still in progress
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: string[] = [];
+    const runPromise = runner.run({
+      chatId: Number(chatId),
+      ts: "1700000013000",
+      userText: "overflow wait test",
+      onEvent: async (event) => { events.push(event.type); },
+    }, store);
+
+    let settled = false;
+    void runPromise.then(() => { settled = true; });
+
+    // Let microtasks flush — run should NOT be settled yet (waiting for overflow recovery)
+    await new Promise(r => setTimeout(r, 50));
+    expect(settled).toBe(false);
+
+    // Simulate recovery complete: compaction ends with willRetry=true, then agent.continue() produces a new message
+    fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+    await new Promise(r => setTimeout(r, 10));
+    expect(settled).toBe(false); // still waiting — willRetry means a new message_end is expected
+
+    const assistant = { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" };
+    fake.session.messages.push(assistant);
+    fake.emit({ type: "message_end", message: assistant });
+
+    const result = await runPromise;
+    expect(result.reply).toBe("recovered");
+    expect(events).toContain("compaction_start");
+  });
+
   it("surfaces auto_retry_start as retry event", async () => {
     sandboxDir = await mkdtemp(join(tmpdir(), "agent-retry-"));
     const chatId = "81";
