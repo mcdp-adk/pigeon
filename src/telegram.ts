@@ -114,7 +114,7 @@ export type TelegramReply = TelegramHtml;
 export const SYSTEM_COMMANDS = [
   {
     command: "start",
-    description: "启动 Pigeon"
+    description: "查看当前状态与配置指引"
   },
   {
     command: "help",
@@ -590,28 +590,43 @@ export const formatDebugReply = (content: ExtractedMessageContent): TelegramRepl
 export const formatStartReply = (
   message: TelegramMessage,
   botName: string,
-  isAuthorized: boolean
+  isAuthorized: boolean,
+  options?: { explicitOnly?: boolean }
 ): TelegramReply => {
   const command = extractCommand(message);
-  const lines = [];
+  const lines = [
+    "<b>基础信息</b>",
+    "- 宿主：<code>Pigeon</code>",
+    `- Bot：<code>${escapeHtml(botName)}</code>`,
+    `- Chat ID：<code>${escapeHtml(String(message.chat.id))}</code>`,
+    `- Topic：${message.message_thread_id === undefined ? "当前消息不在 topic 中" : `<code>${escapeHtml(String(message.message_thread_id))}</code>`}`,
+    "- 命令：<code>/help</code> 查看可用命令，<code>/stop</code> 停止当前任务"
+  ];
+
+  if (command.commandName === "start" && command.commandArgs) {
+    lines.push(`- Start Payload：<code>${escapeHtml(command.commandArgs)}</code>`);
+  }
 
   if (isAuthorized) {
     lines.push(
-      "<b>🐦 Pigeon 已就绪</b>\n",
-      "当前会话已启用。发送消息开始，或使用 /help 查看可用命令。"
+      "",
+      "<b>当前状态</b>",
+      "- 当前 chat 已完成配置并启用",
+      `- Chat 类型：<code>${escapeHtml(message.chat.type)}</code>`,
+      `- 响应模式：${options?.explicitOnly ? "仅响应命令 / @提及 / 回复" : "响应该 chat 中的所有消息"}`,
+      "- 作用范围：当前会话按 chat 共享，topic 不单独隔离",
+      "- 当前会话会复用已有上下文与记忆"
     );
   } else {
-    const chatId = escapeHtml(String(message.chat.id));
     lines.push(
-      "<b>🔒 未授权访问</b>\n",
-      `当前会话尚未启用。请联系管理员在 <code>settings.json</code> 中添加：\n`,
-      `<pre>"allowed_chats": {\n  "${chatId}": {}\n}</pre>\n`,
-      `当前聊天的 ID 为 <code>${chatId}</code>。`
+      "",
+      "<b>配置指引</b>",
+      "- 当前 chat 尚未加入允许列表",
+      "- 配置作用域按 chat 生效，topic 不单独配置",
+      "- 请在 <code>settings.json</code> 的 <code>allowed_chats</code> 中添加下面这一行映射：",
+      `<pre>"${escapeHtml(String(message.chat.id))}": {}</pre>`,
+      "- 完成配置后重新发送 <code>/start</code> 即可看到启用状态"
     );
-  }
-
-  if (command.commandName === "start" && command.commandArgs) {
-    lines.push(`\nstart_payload: <code>${escapeHtml(command.commandArgs)}</code>`);
   }
 
   return asTelegramHtml(lines.join("\n"));
@@ -621,7 +636,7 @@ export const formatHelpReply = (botName: string): TelegramReply => {
   return asTelegramHtml([
     `<b>🐦 Pigeon</b>\n`,
     ...SYSTEM_COMMANDS.map((command) => `<code>/${command.command}</code> — ${escapeHtml(command.description)}`),
-    `\n直接发送消息即可与 AI 对话。`
+    `\n在已启用的 chat 中，可通过命令、@提及或回复机器人发起对话；若该 chat 关闭显式触发，也可直接发送消息。`
   ].join("\n"));
 };
 

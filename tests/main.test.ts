@@ -344,7 +344,7 @@ describe("main startup", () => {
     }
   });
 
-  it("startup: /start bypasses gate even for unauthorized chats", async () => {
+  it("startup: /start bypasses gate even for unauthorized chats while reading policy for status", async () => {
     const { handler, logSpy, restore } = await startHostWithHandler();
 
     try {
@@ -357,9 +357,9 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(mocks.getChatPolicy).toHaveBeenCalledWith(404, createSettings());
     expect(ctx.reply).toHaveBeenCalledWith(
-      formatStartReply(message, "pigeon_bot", false),
+      formatStartReply(message, "pigeon_bot", false, { explicitOnly: true }),
       { parse_mode: "HTML" }
     );
       expect(logSpy).toHaveBeenCalledWith(
@@ -370,7 +370,7 @@ describe("main startup", () => {
     }
   });
 
-  it("startup: /start payload reply stays on bypass path", async () => {
+  it("startup: /start payload reply stays on bypass path while reading policy for status", async () => {
     const { handler, restore } = await startHostWithHandler();
 
     try {
@@ -379,18 +379,20 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(mocks.getChatPolicy).toHaveBeenCalledWith(555, createSettings());
     expect(ctx.reply).toHaveBeenCalledWith(
-      formatStartReply(message, "pigeon_bot", false),
+      formatStartReply(message, "pigeon_bot", false, { explicitOnly: true }),
       { parse_mode: "HTML" }
     );
-      expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload:");
+      const reply = ctx.reply.mock.calls[0]?.[0] as string;
+      expect(reply).toContain("- Start Payload：<code>ticket-42</code>");
+      expect(reply.indexOf("- Start Payload：<code>ticket-42</code>")).toBeLessThan(reply.indexOf("<b>配置指引</b>"));
     } finally {
       restore();
     }
   });
 
-  it("startup: /start shows enabled guidance for authorized chats", async () => {
+  it("startup: /start shows configured status for authorized chats", async () => {
     const { handler, restore } = await startHostWithHandler();
 
     try {
@@ -402,11 +404,12 @@ describe("main startup", () => {
 
       await handler(ctx);
 
-      expect(mocks.getChatPolicy).not.toHaveBeenCalled();
+      expect(mocks.getChatPolicy).toHaveBeenCalledWith(1001, createSettings());
     expect(ctx.reply).toHaveBeenCalledWith(
-      formatStartReply(message, "pigeon_bot", true),
+      formatStartReply(message, "pigeon_bot", true, { explicitOnly: true }),
       { parse_mode: "HTML" }
     );
+      expect((ctx.reply.mock.calls[0]?.[0] as string)).toContain("- 响应模式：仅响应命令 / @提及 / 回复");
     } finally {
       restore();
     }
@@ -433,6 +436,37 @@ describe("main startup", () => {
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=help")
       );
+    } finally {
+      restore();
+    }
+  });
+
+  it("startup: /start in topic reports topic id while keeping chat-level semantics", async () => {
+    mocks.loadSettings.mockResolvedValue(
+      createSettings({
+        telegram: {
+          explicit_only: true,
+          allowed_chats: { "-100987": {} }
+        }
+      })
+    );
+
+    const { handler, restore } = await startHostWithHandler();
+
+    try {
+      const message = mergeMessage({
+        chat: { id: -100987, type: "supergroup" },
+        message_thread_id: 777,
+        text: "/start",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }]
+      });
+      const ctx = createContext(message);
+
+      await handler(ctx);
+
+      const reply = ctx.reply.mock.calls[0]?.[0] as string;
+      expect(reply).toContain("- Topic：<code>777</code>");
+      expect(reply).toContain("- 作用范围：当前会话按 chat 共享，topic 不单独隔离");
     } finally {
       restore();
     }

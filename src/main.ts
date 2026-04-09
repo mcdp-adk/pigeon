@@ -195,7 +195,8 @@ async function dispatchSystemCommand(params: {
 
   if (commandName === "start") {
     const isAuthorized = isChatAllowed(message.chat.id, settings.telegram.allowed_chats);
-    await ctx.reply(formatStartReply(message, botName, isAuthorized), { parse_mode: "HTML" });
+    const chatPolicy = getChatPolicy(message.chat.id, settings);
+    await ctx.reply(formatStartReply(message, botName, isAuthorized, { explicitOnly: chatPolicy.explicit_only }), { parse_mode: "HTML" });
     logInfo("Handled command", {
       command: commandName,
       chat_id: message.chat.id,
