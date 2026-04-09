@@ -103,12 +103,41 @@ const sendTelegramReply = async (
   await send(reply.text);
 };
 
+const EVENT_QUEUE_MAX = 5;
+
+class EventQueue {
+  private queue: Array<() => Promise<void>> = [];
+  private processing = false;
+
+  enqueue(work: () => Promise<void>): boolean {
+    if (this.queue.length >= EVENT_QUEUE_MAX) {
+      return false;
+    }
+    this.queue.push(work);
+    void this.drain();
+    return true;
+  }
+
+  private async drain(): Promise<void> {
+    if (this.processing) return;
+    this.processing = true;
+    try {
+      while (this.queue.length > 0) {
+        await this.queue.shift()!();
+      }
+    } finally {
+      this.processing = false;
+    }
+  }
+}
+
 interface ChatState {
   running: boolean;
   stopRequested: boolean;
   runner: AgentRunner;
   store: ChatStore;
   responseCtx?: TelegramResponseContext;
+  eventQueue: EventQueue;
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");
@@ -139,7 +168,8 @@ const getOrCreateChatState = (chatId: number, settings: Settings): ChatState => 
     stopRequested: false,
     runner: getOrCreateRunner(settings, chatKey, chatDir),
     store,
-    responseCtx: undefined
+    responseCtx: undefined,
+    eventQueue: new EventQueue()
   };
   chatStates.set(chatKey, state);
   return state;
@@ -403,54 +433,47 @@ export const startTelegramHost = async () => {
 
   const SILENT_MARKER = "[SILENT]";
 
-  const fireEventForChat = (chatId: string, text: string): boolean => {
-    if (!isChatAllowed(Number(chatId), settings.telegram.allowed_chats)) {
-      logWarning("Event fired for unauthorized chat, discarding", { chat_id: chatId });
-      return true;
-    }
-
-    const state = getOrCreateChatState(Number(chatId), settings);
-    if (state.running) {
-      logWarning("Event fired but chat is busy, rejecting", { chat_id: chatId });
-      return false;
-    }
-
+  const runEventForChat = async (state: ChatState, chatId: string, text: string): Promise<void> => {
     const ts = String(Date.now());
     state.running = true;
     state.stopRequested = false;
 
-    let runPromise!: Promise<void>;
-    runPromise = (async () => {
-      try {
-        const result = await state.runner.run(
-          { chatId: Number(chatId), userText: text, ts, user: "EVENT" },
-          state.store
-        );
-        logInfo("Event run completed", { chat_id: chatId, stop_reason: result.stopReason });
+    try {
+      const result = await state.runner.run(
+        { chatId: Number(chatId), userText: text, ts, user: "EVENT" },
+        state.store
+      );
+      logInfo("Event run completed", { chat_id: chatId, stop_reason: result.stopReason });
 
-        const reply = result.reply.trim();
-        if (reply !== "" && reply !== SILENT_MARKER) {
-          for (const part of splitText(reply)) {
-            await bot.api.sendMessage(Number(chatId), part, { parse_mode: "HTML" });
-          }
+      const reply = result.reply.trim();
+      if (reply !== "" && reply !== SILENT_MARKER) {
+        for (const part of splitText(reply)) {
+          await bot.api.sendMessage(Number(chatId), part, { parse_mode: "HTML" });
         }
-      } catch (error: unknown) {
-        logError("Event run failed", error);
-      } finally {
-        state.running = false;
-        state.stopRequested = false;
-        state.responseCtx = undefined;
-        activeRuns.delete(runPromise);
       }
-    })();
-
-    activeRuns.add(runPromise);
-    return true;
+    } catch (error: unknown) {
+      logError("Event run failed", error);
+    } finally {
+      state.running = false;
+      state.stopRequested = false;
+      state.responseCtx = undefined;
+    }
   };
 
-  const eventsWatcher = createEventsWatcher(DATA_DIR, ({ chatId, text }) => {
-    return fireEventForChat(chatId, text);
-  });
+  const fireEventForChat = ({ chatId, text }: { chatId: string; text: string }): void => {
+    if (!isChatAllowed(Number(chatId), settings.telegram.allowed_chats)) {
+      logWarning("Event fired for unauthorized chat, discarding", { chat_id: chatId });
+      return;
+    }
+
+    const state = getOrCreateChatState(Number(chatId), settings);
+    const enqueued = state.eventQueue.enqueue(() => runEventForChat(state, chatId, text));
+    if (!enqueued) {
+      logWarning("Event queue full, discarding", { chat_id: chatId });
+    }
+  };
+
+  const eventsWatcher = createEventsWatcher(DATA_DIR, fireEventForChat);
   eventsWatcher.start();
 
   const shutdown = async () => {

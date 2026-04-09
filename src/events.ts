@@ -1,5 +1,5 @@
 import { Cron } from "croner";
-import { existsSync, type FSWatcher, mkdirSync, readdirSync, unlinkSync, watch } from "node:fs";
+import { existsSync, type FSWatcher, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -49,13 +49,16 @@ export class EventsWatcher {
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private crons: Map<string, Cron> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private startTime: number;
   private watcher: FSWatcher | null = null;
   private knownFiles: Set<string> = new Set();
 
   constructor(
     private readonly eventsDir: string,
-    private readonly onTrigger: (event: EventTrigger) => boolean
-  ) {}
+    private readonly onTrigger: (event: EventTrigger) => void
+  ) {
+    this.startTime = Date.now();
+  }
 
   start(): void {
     if (!existsSync(this.eventsDir)) {
@@ -225,6 +228,17 @@ export class EventsWatcher {
   }
 
   private handleImmediate(filename: string, event: ImmediateEvent): void {
+    const filePath = join(this.eventsDir, filename);
+    try {
+      const stat = statSync(filePath);
+      if (stat.mtimeMs < this.startTime) {
+        logInfo("Stale immediate event, deleting", { filename });
+        this.deleteFile(filename);
+        return;
+      }
+    } catch {
+      return;
+    }
     logInfo("Executing immediate event", { filename });
     this.execute(filename, event);
   }
@@ -238,8 +252,8 @@ export class EventsWatcher {
     }
     const now = Date.now();
     if (atTime <= now) {
-      logInfo("Executing overdue one-shot event", { filename });
-      this.execute(filename, event);
+      logInfo("One-shot event in the past, deleting", { filename });
+      this.deleteFile(filename);
       return;
     }
     const delay = atTime - now;
@@ -282,12 +296,7 @@ export class EventsWatcher {
     }
 
     const text = `[EVENT:${filename}:${event.type}:${scheduleInfo}] ${event.text}`;
-    const accepted = this.onTrigger({ chatId: event.chatId, text });
-
-    if (!accepted) {
-      logWarning("Event not accepted (chat busy), retaining file", { filename });
-      return;
-    }
+    this.onTrigger({ chatId: event.chatId, text });
 
     if (deleteAfter) {
       this.deleteFile(filename);
@@ -313,7 +322,7 @@ export class EventsWatcher {
 
 export function createEventsWatcher(
   dataDir: string,
-  onTrigger: (event: EventTrigger) => boolean
+  onTrigger: (event: EventTrigger) => void
 ): EventsWatcher {
   return new EventsWatcher(join(dataDir, "events"), onTrigger);
 }

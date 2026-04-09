@@ -18,6 +18,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 
 import { createPigeonSettingsManager, syncLogToSessionManager } from "./context.js";
+import { logWarning } from "./log.js";
 import { createExecutor, parseSandboxArg, type ExecOptions, type ExecResult, type Executor } from "./sandbox.js";
 import type { Settings } from "./settings.js";
 import type { ChatStore } from "./store.js";
@@ -443,7 +444,8 @@ function readTrimmedFile(path: string): string | undefined {
   try {
     const content = readFileSync(path, "utf-8").trim();
     return content === "" ? undefined : content;
-  } catch {
+  } catch (err) {
+    logWarning("Failed to read file", { path, error: String(err) });
     return undefined;
   }
 }
