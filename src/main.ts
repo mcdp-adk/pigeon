@@ -385,6 +385,14 @@ export const startTelegramHost = async () => {
           await responseCtx.appendDelta(event.delta);
           return;
         }
+        if (event.type === "compaction_start") {
+          await responseCtx.updateProgress("压缩上下文...");
+          return;
+        }
+        if (event.type === "retry") {
+          await responseCtx.updateProgress(`重试中 (${event.attempt}/${event.maxAttempts})...`);
+          return;
+        }
         const label = getToolProgressLabel(event);
         if (label) {
           await responseCtx.updateProgress(label);

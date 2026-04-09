@@ -36,7 +36,9 @@ export interface TelegramRunInput {
 export type AgentRunEvent =
   | { type: "tool_start"; toolName: string; label: string }
   | { type: "tool_end"; toolName: string; label: string; isError: boolean }
-  | { type: "text_delta"; delta: string };
+  | { type: "text_delta"; delta: string }
+  | { type: "compaction_start" }
+  | { type: "retry"; attempt: number; maxAttempts: number };
 
 export interface AgentRunResult {
   stopReason: string;
@@ -232,6 +234,11 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       }
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       runState.lastAssistant = event.message as AssistantMessage;
+    } else if (event.type === "auto_compaction_start") {
+      fireOnEvent(runState, { type: "compaction_start" });
+    } else if (event.type === "auto_retry_start") {
+      const e = event as { type: "auto_retry_start"; attempt: number; maxAttempts: number };
+      fireOnEvent(runState, { type: "retry", attempt: e.attempt, maxAttempts: e.maxAttempts });
     }
   });
 
