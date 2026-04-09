@@ -214,7 +214,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     pendingEventTasks: new Set<Promise<void>>(),
     eventHandlerError: undefined as unknown,
     lastAssistant: undefined as AssistantMessage | undefined,
-    overflowRecovery: undefined as { promise: Promise<void>; resolve: () => void } | undefined,
+    overflowRecovery: undefined as { promise: Promise<void>; resolve: () => void; retrying: boolean } | undefined,
   };
 
   // Subscribe to agent events once (mom pattern)
@@ -236,9 +236,21 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       runState.lastAssistant = event.message as AssistantMessage;
       const msg = event.message as AssistantMessage;
-      if (runState.overflowRecovery && msg.stopReason !== "error") {
-        runState.overflowRecovery.resolve();
-        runState.overflowRecovery = undefined;
+      if (runState.overflowRecovery) {
+        if (msg.stopReason !== "error") {
+          runState.overflowRecovery.resolve();
+          runState.overflowRecovery = undefined;
+        } else {
+          // Error during recovery — might be retried by SDK. Yield a macrotask
+          // to let the SDK's agent_end handler decide (auto_retry_start or nothing).
+          const recovery = runState.overflowRecovery;
+          setTimeout(() => {
+            if (runState.overflowRecovery === recovery && !recovery.retrying) {
+              recovery.resolve();
+              runState.overflowRecovery = undefined;
+            }
+          }, 0);
+        }
       }
     } else if (event.type === "auto_compaction_start") {
       if (event.reason === "overflow" && !runState.overflowRecovery) {
@@ -246,6 +258,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         runState.overflowRecovery = {
           promise: new Promise<void>(r => { resolve = r; }),
           resolve,
+          retrying: false,
         };
       }
       fireOnEvent(runState, { type: "compaction_start", reason: event.reason });
@@ -255,6 +268,9 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         runState.overflowRecovery = undefined;
       }
     } else if (event.type === "auto_retry_start") {
+      if (runState.overflowRecovery) {
+        runState.overflowRecovery.retrying = true;
+      }
       fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
     } else if (event.type === "auto_retry_end") {
       if (runState.overflowRecovery && !event.success) {

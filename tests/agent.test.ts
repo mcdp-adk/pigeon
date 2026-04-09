@@ -672,4 +672,38 @@ describe("agent runner", () => {
 
     expect(result.stopReason).toBeDefined();
   });
+
+  it("completes run on non-retryable error during overflow recovery", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-overflow-nonretry-"));
+    const chatId = "88";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // Recovery prompt fails with non-retryable error (e.g. invalid API key)
+        // SDK does NOT emit auto_retry_start for non-retryable errors
+        const errorAssistant = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "invalid_api_key" };
+        fake.session.messages.push(errorAssistant);
+        fake.emit({ type: "message_end", message: errorAssistant });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000019000",
+      userText: "non-retryable error test",
+    }, store);
+
+    expect(result.stopReason).toBe("error");
+  });
 });
