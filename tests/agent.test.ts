@@ -586,4 +586,90 @@ describe("agent runner", () => {
 
     expect(result.reply).toBe("second");
   });
+
+  it("waits through retryable error during overflow recovery", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-overflow-retry-"));
+    const chatId = "86";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // Recovery prompt hits retryable error
+        const errorAssistant = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "overloaded" };
+        fake.emit({ type: "message_end", message: errorAssistant });
+        // SDK auto-retries
+        fake.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: "overloaded" });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: string[] = [];
+    const runPromise = runner.run({
+      chatId: Number(chatId),
+      ts: "1700000017000",
+      userText: "overflow retry test",
+      onEvent: async (event) => { events.push(event.type); },
+    }, store);
+
+    let settled = false;
+    void runPromise.then(() => { settled = true; });
+
+    await new Promise(r => setTimeout(r, 50));
+    expect(settled).toBe(false);
+
+    // Retry succeeds
+    const okAssistant = { role: "assistant", content: [{ type: "text", text: "finally ok" }], stopReason: "stop" };
+    fake.session.messages.push(okAssistant);
+    fake.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+    fake.emit({ type: "message_end", message: okAssistant });
+
+    const result = await runPromise;
+    expect(result.reply).toBe("finally ok");
+    expect(events).toContain("compaction_start");
+    expect(events).toContain("retry");
+  });
+
+  it("completes run when overflow recovery retry is exhausted", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-overflow-exhaust-"));
+    const chatId = "87";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // Recovery prompt fails with retryable error
+        const errorAssistant = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "overloaded" };
+        fake.emit({ type: "message_end", message: errorAssistant });
+        fake.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 1, delayMs: 0, errorMessage: "overloaded" });
+        // Retry exhausted
+        fake.emit({ type: "auto_retry_end", success: false, attempt: 1, finalError: "max retries exceeded" });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000018000",
+      userText: "overflow exhaust test",
+    }, store);
+
+    expect(result.stopReason).toBeDefined();
+  });
 });

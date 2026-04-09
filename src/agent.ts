@@ -235,7 +235,8 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       }
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       runState.lastAssistant = event.message as AssistantMessage;
-      if (runState.overflowRecovery) {
+      const msg = event.message as AssistantMessage;
+      if (runState.overflowRecovery && msg.stopReason !== "error") {
         runState.overflowRecovery.resolve();
         runState.overflowRecovery = undefined;
       }
@@ -255,6 +256,11 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       }
     } else if (event.type === "auto_retry_start") {
       fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
+    } else if (event.type === "auto_retry_end") {
+      if (runState.overflowRecovery && !event.success) {
+        runState.overflowRecovery.resolve();
+        runState.overflowRecovery = undefined;
+      }
     }
   });
 
