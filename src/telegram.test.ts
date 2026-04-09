@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createResponseContext } from "./telegram.js";
+import { createResponseContext, normalizeTelegramHtml } from "./telegram.js";
 
 describe("TelegramResponseContext", () => {
   beforeEach(() => {
@@ -64,7 +64,7 @@ describe("TelegramResponseContext", () => {
 
     const responseCtx = createResponseContext(ctx);
     await responseCtx.sendInitial();
-    await responseCtx.sendFinal("最终回复");
+    await responseCtx.sendFinal(normalizeTelegramHtml("最终回复"));
 
     expect(editMock).toHaveBeenCalledWith(456, 123, "最终回复", { parse_mode: "HTML" });
   });
@@ -78,7 +78,7 @@ describe("TelegramResponseContext", () => {
     } as any;
 
     const responseCtx = createResponseContext(ctx);
-    await responseCtx.sendFinal("最终回复");
+    await responseCtx.sendFinal(normalizeTelegramHtml("最终回复"));
 
     expect(replyMock).toHaveBeenCalledWith("最终回复", { parse_mode: "HTML" });
   });
@@ -105,7 +105,7 @@ describe("TelegramResponseContext", () => {
     expect(editMock).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(editMock).toHaveBeenCalledWith(456, 123, "你好", { parse_mode: "HTML" });
+    expect(editMock).toHaveBeenCalledWith(456, 123, "你好▌", { parse_mode: "HTML" });
   });
 
   it("appendDelta 在 1 秒内节流合并", async () => {
@@ -128,7 +128,26 @@ describe("TelegramResponseContext", () => {
     expect(editMock).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(editMock).toHaveBeenCalledWith(456, 123, "你好世界", { parse_mode: "HTML" });
+    expect(editMock).toHaveBeenCalledWith(456, 123, "你好世界▌", { parse_mode: "HTML" });
+  });
+
+  it("appendDelta 会转义中间态 HTML，避免无效标签", async () => {
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 123 });
+    const editMock = vi.fn().mockResolvedValue(true);
+    const ctx = {
+      reply: replyMock,
+      chat: { id: 456 },
+      api: { editMessageText: editMock },
+    } as any;
+
+    const responseCtx = createResponseContext(ctx);
+    await responseCtx.sendInitial();
+    editMock.mockClear();
+
+    await responseCtx.appendDelta("<b>你");
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(editMock).toHaveBeenCalledWith(456, 123, "&lt;b&gt;你▌", { parse_mode: "HTML" });
   });
 
   it("markStopped 将消息替换为停止提示", async () => {

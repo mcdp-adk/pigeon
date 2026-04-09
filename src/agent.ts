@@ -22,6 +22,7 @@ import { logWarning } from "./log.js";
 import { createExecutor, parseSandboxArg, type ExecOptions, type ExecResult, type Executor } from "./sandbox.js";
 import type { Settings } from "./settings.js";
 import type { ChatStore } from "./store.js";
+import { normalizeTelegramHtml, type TelegramHtml } from "./telegram.js";
 import { createPigeonTools } from "./tools/index.js";
 
 export interface TelegramRunInput {
@@ -43,7 +44,7 @@ export type AgentRunEvent =
 export interface AgentRunResult {
   stopReason: string;
   errorMessage?: string;
-  reply: string;
+  reply: TelegramHtml;
 }
 
 export interface AgentRunner {
@@ -466,12 +467,12 @@ function formatPrompt(input: TelegramRunInput): string {
   return `[${timestamp}] [${displayName}]: ${input.userText}`;
 }
 
-function collectAssistantText(message: AssistantMessage | undefined): string {
-  if (!message) return "";
-  return message.content
+function collectAssistantText(message: AssistantMessage | undefined): TelegramHtml {
+  if (!message) return normalizeTelegramHtml("");
+  return normalizeTelegramHtml(message.content
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
-    .join("\n");
+    .join("\n"));
 }
 
 function getLastAssistant(messages: readonly unknown[]): AssistantMessage | undefined {

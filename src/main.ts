@@ -20,9 +20,10 @@ import {
   formatStartReply,
   getMessageHandlingDecision,
   isChatAllowed,
+  normalizeTelegramHtml,
   splitText,
+  type TelegramHtml,
   type TelegramResponseContext,
-  type TelegramReply,
   type TelegramMessage
 } from "./telegram.js";
 
@@ -91,18 +92,6 @@ const withOptionalProxyConfig = (proxyAgent: HttpsProxyAgent<string> | SocksProx
   };
 };
 
-const sendTelegramReply = async (
-  reply: TelegramReply,
-  send: (text: string, options?: { parse_mode?: "HTML" }) => Promise<unknown>
-) => {
-  if (reply.kind === "html") {
-    await send(reply.text, { parse_mode: "HTML" });
-    return;
-  }
-
-  await send(reply.text);
-};
-
 const EVENT_QUEUE_MAX = 5;
 
 class EventQueue {
@@ -141,10 +130,11 @@ interface ChatState {
 }
 
 const DATA_DIR = resolve(process.cwd(), "data");
-const BUSY_REPLY = "<b>⏳ 正在处理上一条消息</b>\n\n请稍候，或发送 /stop 取消当前任务。";
-const UNSUPPORTED_TEXT_REPLY = "<b>⚠️ 无法处理此消息</b>\n\n仅支持纯文字消息，请发送文字内容。";
-const RUN_FAILED_REPLY = "<b>❌ 处理失败</b>\n\n任务执行时出错，请稍后重试。";
-const EMPTY_REPLY = "<b>ℹ️ 无回复内容</b>";
+const BUSY_REPLY = normalizeTelegramHtml("<b>⏳ 正在处理上一条消息</b>\n\n请稍候，或发送 /stop 取消当前任务。");
+const UNSUPPORTED_TEXT_REPLY = normalizeTelegramHtml("<b>⚠️ 无法处理此消息</b>\n\n仅支持纯文字消息，请发送文字内容。");
+const RUN_FAILED_REPLY = normalizeTelegramHtml("<b>❌ 处理失败</b>\n\n任务执行时出错，请稍后重试。");
+const EMPTY_REPLY = normalizeTelegramHtml("<b>ℹ️ 无回复内容</b>");
+const STOP_IDLE_REPLY = normalizeTelegramHtml("<b>ℹ️ 没有正在运行的任务</b>");
 
 const chatStates = new Map<string, ChatState>();
 
@@ -205,7 +195,7 @@ async function dispatchSystemCommand(params: {
 
   if (commandName === "start") {
     const isAuthorized = isChatAllowed(message.chat.id, settings.telegram.allowed_chats);
-    await sendTelegramReply(formatStartReply(message, botName, isAuthorized), ctx.reply.bind(ctx));
+    await ctx.reply(formatStartReply(message, botName, isAuthorized), { parse_mode: "HTML" });
     logInfo("Handled command", {
       command: commandName,
       chat_id: message.chat.id,
@@ -218,7 +208,7 @@ async function dispatchSystemCommand(params: {
   if (commandName === "stop") {
     const state = getOrCreateChatState(message.chat.id, settings);
     if (!state.running) {
-      await ctx.reply("<b>ℹ️ 没有正在运行的任务</b>", { parse_mode: "HTML" });
+      await ctx.reply(STOP_IDLE_REPLY, { parse_mode: "HTML" });
       logInfo("Handled command", {
         command: commandName,
         chat_id: message.chat.id,
@@ -245,7 +235,7 @@ async function dispatchSystemCommand(params: {
     return true;
   }
 
-  await sendTelegramReply(formatHelpReply(botName), ctx.reply.bind(ctx));
+  await ctx.reply(formatHelpReply(botName), { parse_mode: "HTML" });
   logInfo("Handled command", {
     command: commandName,
     chat_id: message.chat.id,
@@ -420,7 +410,7 @@ export const startTelegramHost = async () => {
         if (result.stopReason === "aborted" || state.stopRequested) {
           await responseCtx.markStopped();
         } else {
-          const finalText = result.reply.trim() !== "" ? result.reply : result.stopReason === "error" ? RUN_FAILED_REPLY : EMPTY_REPLY;
+          const finalText: TelegramHtml = result.reply.trim() !== "" ? result.reply : result.stopReason === "error" ? RUN_FAILED_REPLY : EMPTY_REPLY;
           await responseCtx.sendFinal(finalText);
         }
 
@@ -453,12 +443,12 @@ export const startTelegramHost = async () => {
       );
       logInfo("Event run completed", { chat_id: chatId, stop_reason: result.stopReason });
 
-      const reply = result.reply.trim();
-      if (reply !== "" && reply !== SILENT_MARKER) {
-        for (const part of splitText(reply)) {
-          await bot.api.sendMessage(Number(chatId), part, { parse_mode: "HTML" });
+        const reply = result.reply.trim();
+        if (reply !== "" && reply !== SILENT_MARKER) {
+          for (const part of splitText(result.reply)) {
+            await bot.api.sendMessage(Number(chatId), part, { parse_mode: "HTML" });
+          }
         }
-      }
     } catch (error: unknown) {
       logError("Event run failed", error);
     } finally {

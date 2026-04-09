@@ -10,6 +10,9 @@ import {
   getMessageHandlingDecision,
   isExplicitTrigger,
   isUserContentMessage,
+  normalizeTelegramHtml,
+  renderStreamingPreview,
+  splitText,
   shouldHandleMessage,
   type TelegramMessage
 } from "../src/telegram.js";
@@ -351,12 +354,11 @@ describe("extract", () => {
     }
   });
 
-  it("formats plain-text debug reply", () => {
+  it("formats debug reply as telegram html", () => {
     const summary = extractMessageContent(asMessage(telegramUpdateMessageCommandWithArgs));
 
-    expect(formatDebugReply(summary)).toEqual({
-      kind: "plain",
-      text: [
+    expect(formatDebugReply(summary)).toBe(
+      `<pre>${[
         "debug_message",
         "chat.id=1",
         "chat.type=private",
@@ -372,8 +374,8 @@ describe("extract", () => {
         "message_thread_id=(none)",
         "forward_origin_type=(none)",
         "media_group_id=(none)"
-      ].join("\n")
-    });
+      ].join("\n")}</pre>`
+    );
   });
 });
 
@@ -388,13 +390,12 @@ describe("start", () => {
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(formatStartReply(message, "pigeon-bot", true)).toEqual({
-      kind: "html",
-      text: [
+    expect(formatStartReply(message, "pigeon-bot", true)).toBe(
+      [
         "<b>🐦 Pigeon 已就绪</b>\n",
         "当前会话已启用。发送消息开始，或使用 /help 查看可用命令。"
       ].join("\n")
-    });
+    );
   });
 
   it("formats /start reply for unauthorized chats", () => {
@@ -404,15 +405,14 @@ describe("start", () => {
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
-    expect(formatStartReply(message, "pigeon-bot", false)).toEqual({
-      kind: "html",
-      text: [
+    expect(formatStartReply(message, "pigeon-bot", false)).toBe(
+      [
         "<b>🔒 未授权访问</b>\n",
         `当前会话尚未启用。请联系管理员在 <code>settings.json</code> 中添加：\n`,
         `<pre>"allowed_chats": {\n  "2097986184": {}\n}</pre>\n`,
         `当前聊天的 ID 为 <code>2097986184</code>。`
       ].join("\n")
-    });
+    );
   });
 
   it("formats /start reply with payload", () => {
@@ -420,9 +420,8 @@ describe("start", () => {
 
     const reply = formatStartReply(message, "pigeon-bot", false);
 
-    expect(reply.kind).toBe("html");
-    expect(reply.text).toContain("start_payload: <code>ticket-42</code>");
-    expect(reply.text).toContain("当前会话尚未启用");
+    expect(reply).toContain("start_payload: <code>ticket-42</code>");
+    expect(reply).toContain("当前会话尚未启用");
   });
 
   it("escapes user-controlled payload in /start html", () => {
@@ -433,20 +432,35 @@ describe("start", () => {
 
     const reply = formatStartReply(message, "pigeon-bot", false);
 
-    expect(reply.kind).toBe("html");
-    expect(reply.text).toContain("start_payload: <code>&lt;tag&gt;&amp;</code>");
+    expect(reply).toContain("start_payload: <code>&lt;tag&gt;&amp;</code>");
   });
 
   it("formats /help reply", () => {
-    expect(formatHelpReply("pigeon-bot")).toEqual({
-      kind: "html",
-      text: [
+    expect(formatHelpReply("pigeon-bot")).toBe(
+      [
         `<b>🐦 Pigeon</b>\n`,
         "<code>/start</code> — 启动 Pigeon",
         "<code>/help</code> — 查看可用命令",
         "<code>/stop</code> — 停止当前任务",
         `\n直接发送消息即可与 AI 对话。`
       ].join("\n")
-    });
+    );
+  });
+
+  it("normalizes malformed telegram html while preserving supported tags", () => {
+    expect(normalizeTelegramHtml("<b>hello<script>x</script>")).toBe("<b>hello&lt;script&gt;x&lt;/script&gt;</b>");
+  });
+
+  it("renders streaming preview as escaped telegram html", () => {
+    expect(renderStreamingPreview("<b>tag</b>" as string)).toBe("&lt;b&gt;tag&lt;/b&gt;▌");
+  });
+
+  it("splits long telegram html without breaking tags", () => {
+    const long = normalizeTelegramHtml(`<b>${"a".repeat(5000)}</b>`);
+    const parts = splitText(long);
+
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]!.endsWith("</b>")).toBe(true);
+    expect(parts[1]!.startsWith("<b>")).toBe(true);
   });
 });

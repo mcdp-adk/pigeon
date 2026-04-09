@@ -106,15 +106,10 @@ export interface TelegramCommand {
   commandArgs: string | undefined;
 }
 
-export type TelegramReply =
-  | {
-      kind: "plain";
-      text: string;
-    }
-  | {
-      kind: "html";
-      text: string;
-    };
+declare const telegramHtmlBrand: unique symbol;
+
+export type TelegramHtml = string & { readonly [telegramHtmlBrand]: true };
+export type TelegramReply = TelegramHtml;
 
 export const SYSTEM_COMMANDS = [
   {
@@ -275,19 +270,123 @@ export const getMessageHandlingDecision = (
 const NONE = "(none)";
 const PREVIEW_LIMIT = 200;
 
-const plainReply = (text: string): TelegramReply => {
-  return { kind: "plain", text };
-};
-
-const htmlReply = (text: string): TelegramReply => {
-  return { kind: "html", text };
-};
+const asTelegramHtml = (text: string): TelegramHtml => text as TelegramHtml;
 
 const escapeHtml = (value: string): string => {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+};
+
+const ENTITY_RE = /^&(?:[a-zA-Z][a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);/;
+const CODE_CLASS_RE = /^language-[a-z0-9_+-]+$/;
+
+type HtmlTagName = "b" | "code" | "pre" | "blockquote";
+type HtmlToken =
+  | { kind: "text"; raw: string }
+  | { kind: "tag"; raw: string; name: HtmlTagName; closing: boolean };
+
+type OpenTag = { name: HtmlTagName; open: string; close: string };
+
+const parseAllowedTag = (rawTag: string): HtmlToken | undefined => {
+  if (rawTag === "<b>") return { kind: "tag", raw: rawTag, name: "b", closing: false };
+  if (rawTag === "</b>") return { kind: "tag", raw: rawTag, name: "b", closing: true };
+  if (rawTag === "<pre>") return { kind: "tag", raw: rawTag, name: "pre", closing: false };
+  if (rawTag === "</pre>") return { kind: "tag", raw: rawTag, name: "pre", closing: true };
+  if (rawTag === "<code>") return { kind: "tag", raw: rawTag, name: "code", closing: false };
+  if (rawTag === "</code>") return { kind: "tag", raw: rawTag, name: "code", closing: true };
+  if (rawTag === "<blockquote>") return { kind: "tag", raw: rawTag, name: "blockquote", closing: false };
+  if (rawTag === "</blockquote>") return { kind: "tag", raw: rawTag, name: "blockquote", closing: true };
+
+  const codeClassMatch = /^<code class="([^"]+)">$/.exec(rawTag);
+  if (codeClassMatch && CODE_CLASS_RE.test(codeClassMatch[1]!)) {
+    return { kind: "tag", raw: rawTag, name: "code", closing: false };
+  }
+
+  return undefined;
+};
+
+const tokenizeTelegramHtml = (input: string): HtmlToken[] => {
+  const tokens: HtmlToken[] = [];
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i]!;
+
+    if (ch === "<") {
+      const end = input.indexOf(">", i + 1);
+      if (end !== -1) {
+        const rawTag = input.slice(i, end + 1);
+        const tag = parseAllowedTag(rawTag);
+        if (tag) {
+          tokens.push(tag);
+          i = end + 1;
+          continue;
+        }
+        tokens.push({ kind: "text", raw: escapeHtml(rawTag) });
+        i = end + 1;
+        continue;
+      }
+    }
+
+    if (ch === "&") {
+      const entity = input.slice(i).match(ENTITY_RE)?.[0];
+      if (entity) {
+        tokens.push({ kind: "text", raw: entity });
+        i += entity.length;
+        continue;
+      }
+    }
+
+    tokens.push({ kind: "text", raw: escapeHtml(ch) });
+    i += 1;
+  }
+  return tokens;
+};
+
+export const normalizeTelegramHtml = (input: string): TelegramHtml => {
+  const result: string[] = [];
+  const stack: OpenTag[] = [];
+
+  for (const token of tokenizeTelegramHtml(input)) {
+    if (token.kind === "text") {
+      result.push(token.raw);
+      continue;
+    }
+
+    if (!token.closing) {
+      stack.push({ name: token.name, open: token.raw, close: `</${token.name}>` });
+      result.push(token.raw);
+      continue;
+    }
+
+    if (stack.length > 0 && stack.at(-1)?.name === token.name) {
+      result.push(token.raw);
+      stack.pop();
+    } else {
+      result.push(escapeHtml(token.raw));
+    }
+  }
+
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    result.push(stack[i]!.close);
+  }
+
+  return asTelegramHtml(result.join(""));
+};
+
+const closeOpenTags = (stack: OpenTag[]): string => stack.slice().reverse().map((tag) => tag.close).join("");
+const reopenTags = (stack: OpenTag[]): string => stack.map((tag) => tag.open).join("");
+
+export const renderStreamingPreview = (text: string): TelegramHtml => {
+  return asTelegramHtml(`${escapeHtml(text)}▌`);
+};
+
+const renderProgressReply = (lines: string[]): TelegramHtml => {
+  if (lines.length === 0) {
+    return asTelegramHtml("<b>⏳ 正在处理</b>");
+  }
+  return asTelegramHtml(`<b>⏳ 正在处理</b>\n\n<blockquote>${lines.join("\n")}</blockquote>`);
 };
 
 const code = (value: string): string => {
@@ -467,7 +566,7 @@ export const extractMessageContent = (message: TelegramMessage): ExtractedMessag
 };
 
 export const formatDebugReply = (content: ExtractedMessageContent): TelegramReply => {
-  return plainReply(
+  return asTelegramHtml(`<pre>${escapeHtml(
     [
       "debug_message",
       `chat.id=${valueOrNone(content.chatId)}`,
@@ -485,7 +584,7 @@ export const formatDebugReply = (content: ExtractedMessageContent): TelegramRepl
       `forward_origin_type=${valueOrNone(content.forwardOriginType)}`,
       `media_group_id=${valueOrNone(content.mediaGroupId)}`
     ].join("\n")
-  );
+  )}</pre>`);
 };
 
 export const formatStartReply = (
@@ -515,44 +614,99 @@ export const formatStartReply = (
     lines.push(`\nstart_payload: <code>${escapeHtml(command.commandArgs)}</code>`);
   }
 
-  return htmlReply(lines.join("\n"));
+  return asTelegramHtml(lines.join("\n"));
 };
 
 export const formatHelpReply = (botName: string): TelegramReply => {
-  return htmlReply(
-    [
-      `<b>🐦 Pigeon</b>\n`,
-      ...SYSTEM_COMMANDS.map((command) => `<code>/${command.command}</code> — ${escapeHtml(command.description)}`),
-      `\n直接发送消息即可与 AI 对话。`
-    ].join("\n")
-  );
+  return asTelegramHtml([
+    `<b>🐦 Pigeon</b>\n`,
+    ...SYSTEM_COMMANDS.map((command) => `<code>/${command.command}</code> — ${escapeHtml(command.description)}`),
+    `\n直接发送消息即可与 AI 对话。`
+  ].join("\n"));
 };
 
 export interface TelegramResponseContext {
   sendInitial(): Promise<void>;
   updateProgress(label: string): Promise<void>;
   appendDelta(delta: string): Promise<void>;
-  sendFinal(text: string): Promise<void>;
+  sendFinal(text: TelegramHtml): Promise<void>;
   markStopped(): Promise<void>;
 }
 
 export const TELEGRAM_MAX_LENGTH = 4096;
 
-export const splitText = (text: string): string[] => {
+export const splitText = (text: TelegramHtml): TelegramHtml[] => {
   if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
-  const parts: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    parts.push(remaining.slice(0, TELEGRAM_MAX_LENGTH));
-    remaining = remaining.slice(TELEGRAM_MAX_LENGTH);
+
+  const tokens = tokenizeTelegramHtml(text);
+  const parts: TelegramHtml[] = [];
+  const stack: OpenTag[] = [];
+  let current = "";
+
+  const pushCurrent = (): void => {
+    const closed = current + closeOpenTags(stack);
+    if (closed !== "") {
+      parts.push(asTelegramHtml(closed));
+    }
+    current = reopenTags(stack);
+  };
+
+  for (const token of tokens) {
+    if (token.kind === "tag") {
+      if (current.length + token.raw.length > TELEGRAM_MAX_LENGTH && current !== "") {
+        pushCurrent();
+      }
+      current += token.raw;
+      if (!token.closing) {
+        stack.push({ name: token.name, open: token.raw, close: `</${token.name}>` });
+      } else if (stack.at(-1)?.name === token.name) {
+        stack.pop();
+      }
+      continue;
+    }
+
+    let remaining = token.raw;
+    while (remaining.length > 0) {
+      const available = TELEGRAM_MAX_LENGTH - current.length - closeOpenTags(stack).length;
+      if (available <= 0 && current !== "") {
+        pushCurrent();
+        continue;
+      }
+      if (remaining.length <= available) {
+        current += remaining;
+        remaining = "";
+        continue;
+      }
+
+      let cut = available;
+      const entityStart = remaining.lastIndexOf("&", available - 1);
+      if (entityStart !== -1) {
+        const entityEnd = remaining.indexOf(";", entityStart);
+        if (entityEnd !== -1 && entityEnd >= available) {
+          cut = entityStart;
+        }
+      }
+      if (cut <= 0) {
+        pushCurrent();
+        continue;
+      }
+
+      current += remaining.slice(0, cut);
+      remaining = remaining.slice(cut);
+      pushCurrent();
+    }
   }
+
+  if (current !== "") {
+    parts.push(asTelegramHtml(current + closeOpenTags(stack)));
+  }
+
   return parts;
 };
 
 export const createResponseContext = (ctx: Context): TelegramResponseContext => {
   let messageId: number | undefined;
-  let progressText = "<b>⏳ 正在处理</b>";
-  let hasProgressUpdates = false;
+  let progressLines: string[] = [];
   let lastProgressEdit = 0;
   let pendingProgressTimeout: NodeJS.Timeout | undefined;
 
@@ -563,7 +717,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
 
   const EDIT_INTERVAL_MS = 1000;
 
-  const doEdit = async (text: string): Promise<void> => {
+  const doEdit = async (text: TelegramHtml): Promise<void> => {
     if (!messageId) return;
     try {
       await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { parse_mode: "HTML" });
@@ -573,14 +727,13 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
   const flushProgress = async (): Promise<void> => {
     if (pendingProgressTimeout) { clearTimeout(pendingProgressTimeout); pendingProgressTimeout = undefined; }
     lastProgressEdit = Date.now();
-    const textToEdit = hasProgressUpdates ? `${progressText}</blockquote>` : progressText;
-    await doEdit(textToEdit);
+    await doEdit(renderProgressReply(progressLines));
   };
 
   const flushStream = async (): Promise<void> => {
     if (pendingStreamTimeout) { clearTimeout(pendingStreamTimeout); pendingStreamTimeout = undefined; }
     lastStreamEdit = Date.now();
-    await doEdit(streamingText);
+    await doEdit(renderStreamingPreview(streamingText));
   };
 
   const cancelPending = (): void => {
@@ -591,18 +744,13 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
   return {
     async sendInitial() {
       if (messageId) return;
-      const msg = await ctx.reply(progressText, { parse_mode: "HTML" });
+      const msg = await ctx.reply(renderProgressReply(progressLines), { parse_mode: "HTML" });
       messageId = msg.message_id;
     },
 
     async updateProgress(label: string) {
       if (!messageId || inStreamingMode) return;
-      if (!hasProgressUpdates) {
-        progressText += `\n\n<blockquote>→ ${escapeHtml(label)}`;
-        hasProgressUpdates = true;
-      } else {
-        progressText += `\n→ ${escapeHtml(label)}`;
-      }
+      progressLines.push(`→ ${escapeHtml(label)}`);
       const timeSince = Date.now() - lastProgressEdit;
       if (timeSince >= EDIT_INTERVAL_MS) {
         await flushProgress();
@@ -617,7 +765,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
         inStreamingMode = true;
         cancelPending();
         streamingText = "";
-        await doEdit("▌");
+        await doEdit(renderStreamingPreview(""));
       }
       streamingText += delta;
       const timeSince = Date.now() - lastStreamEdit;
@@ -628,7 +776,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
       }
     },
 
-    async sendFinal(text: string) {
+    async sendFinal(text: TelegramHtml) {
       cancelPending();
       const parts = splitText(text);
       const first = parts[0] ?? "";
@@ -645,7 +793,7 @@ export const createResponseContext = (ctx: Context): TelegramResponseContext => 
     async markStopped() {
       cancelPending();
       if (!messageId) return;
-      await doEdit("<b>⏹ 已停止</b>");
+      await doEdit(asTelegramHtml("<b>⏹ 已停止</b>"));
     }
   };
 };

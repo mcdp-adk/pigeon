@@ -358,10 +358,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatStartReply(message, "pigeon_bot", false).text,
-        { parse_mode: "HTML" }
-      );
+    expect(ctx.reply).toHaveBeenCalledWith(
+      formatStartReply(message, "pigeon_bot", false),
+      { parse_mode: "HTML" }
+    );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=start")
       );
@@ -380,10 +380,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatStartReply(message, "pigeon_bot", false).text,
-        { parse_mode: "HTML" }
-      );
+    expect(ctx.reply).toHaveBeenCalledWith(
+      formatStartReply(message, "pigeon_bot", false),
+      { parse_mode: "HTML" }
+    );
       expect(ctx.reply.mock.calls[0]?.[0]).toContain("start_payload:");
     } finally {
       restore();
@@ -403,10 +403,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatStartReply(message, "pigeon_bot", true).text,
-        { parse_mode: "HTML" }
-      );
+    expect(ctx.reply).toHaveBeenCalledWith(
+      formatStartReply(message, "pigeon_bot", true),
+      { parse_mode: "HTML" }
+    );
     } finally {
       restore();
     }
@@ -426,10 +426,10 @@ describe("main startup", () => {
       await handler(ctx);
 
       expect(mocks.getChatPolicy).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(
-        formatHelpReply("pigeon_bot").text,
-        { parse_mode: "HTML" }
-      );
+    expect(ctx.reply).toHaveBeenCalledWith(
+      formatHelpReply("pigeon_bot"),
+      { parse_mode: "HTML" }
+    );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Handled command command=help")
       );
