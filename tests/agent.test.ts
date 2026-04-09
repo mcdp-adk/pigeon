@@ -706,4 +706,43 @@ describe("agent runner", () => {
 
     expect(result.stopReason).toBe("error");
   });
+
+  it("completes run on non-retryable error after a successful retry", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-overflow-retry-then-fail-"));
+    const chatId = "89";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // First attempt: retryable error
+        const err1 = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "overloaded" };
+        fake.emit({ type: "message_end", message: err1 });
+        fake.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 0, errorMessage: "overloaded" });
+        // Retry succeeds (retrying resets)
+        fake.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+        // Second attempt: non-retryable error — no auto_retry_start follows
+        const err2 = { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "invalid_api_key" };
+        fake.session.messages.push(err2);
+        fake.emit({ type: "message_end", message: err2 });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000020000",
+      userText: "retry then non-retryable test",
+    }, store);
+
+    expect(result.stopReason).toBe("error");
+  });
 });

@@ -273,9 +273,13 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       }
       fireOnEvent(runState, { type: "retry", attempt: event.attempt, maxAttempts: event.maxAttempts });
     } else if (event.type === "auto_retry_end") {
-      if (runState.overflowRecovery && !event.success) {
-        runState.overflowRecovery.resolve();
-        runState.overflowRecovery = undefined;
+      if (runState.overflowRecovery) {
+        if (!event.success) {
+          runState.overflowRecovery.resolve();
+          runState.overflowRecovery = undefined;
+        } else {
+          runState.overflowRecovery.retrying = false;
+        }
       }
     }
   });
