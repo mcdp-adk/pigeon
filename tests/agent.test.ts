@@ -786,4 +786,79 @@ describe("agent runner", () => {
 
     expect(result.reply).toBe("third time");
   });
+
+  it("waits through second overflow compaction during recovery", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-double-overflow-"));
+    const chatId = "91";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        // First overflow → compaction → retry
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        // Recovery prompt overflows again
+        fake.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "context_length_exceeded" } });
+        // Second overflow compaction (SDK detects overflow in _checkCompaction)
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false,
+          errorMessage: "Context overflow recovery failed" });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: string[] = [];
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000022000",
+      userText: "double overflow test",
+      onEvent: async (event) => { events.push(event.type); },
+    }, store);
+
+    expect(result.stopReason).toBe("error");
+    expect(events.filter(e => e === "compaction_start")).toHaveLength(2);
+  });
+
+  it("waits for success after second overflow compaction", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-double-overflow-ok-"));
+    const chatId = "92";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        fake.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "context_length_exceeded" } });
+        // Second overflow → compaction succeeds → retry succeeds
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
+        const ok = { role: "assistant", content: [{ type: "text", text: "finally worked" }], stopReason: "stop" };
+        fake.session.messages.push(ok);
+        fake.emit({ type: "message_end", message: ok });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000023000",
+      userText: "double overflow success test",
+    }, store);
+
+    expect(result.reply).toBe("finally worked");
+  });
 });
