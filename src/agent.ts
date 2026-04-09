@@ -263,20 +263,13 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         }
       }
     } else if (event.type === "auto_compaction_start") {
-      if (event.reason === "overflow") {
-        if (runState.overflowRecovery) {
-          if (runState.overflowRecovery.deferredTimer !== undefined) {
-            clearTimeout(runState.overflowRecovery.deferredTimer);
-            runState.overflowRecovery.deferredTimer = undefined;
-          }
-        } else {
-          let resolve!: () => void;
-          runState.overflowRecovery = {
-            promise: new Promise<void>(r => { resolve = r; }),
-            resolve,
-            deferredTimer: undefined,
-          };
-        }
+      if (event.reason === "overflow" && !runState.overflowRecovery) {
+        let resolve!: () => void;
+        runState.overflowRecovery = {
+          promise: new Promise<void>(r => { resolve = r; }),
+          resolve,
+          deferredTimer: undefined,
+        };
       }
       fireOnEvent(runState, { type: "compaction_start", reason: event.reason });
     } else if (event.type === "auto_compaction_end") {
