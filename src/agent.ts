@@ -650,22 +650,36 @@ Schedule tasks that wake you up at a specific time or on a recurring basis. Even
 - \`0 9 * * 1-5\` = weekdays at 9:00
 - \`30 14 * * 1\` = Mondays at 14:30
 
+### Timezones
+All \`at\` timestamps must include an offset (for example \`+08:00\`). Periodic events use IANA timezone names. The harness runs in ${Intl.DateTimeFormat().resolvedOptions().timeZone}. When users mention times without a timezone, assume ${Intl.DateTimeFormat().resolvedOptions().timeZone}.
+
 ### Creating Events
+Use unique filenames to avoid overwriting an existing event. Include a timestamp or random suffix:
 \`\`\`bash
 cat > ${workspacePath}/events/my-task-$(date +%s).json << 'EOF'
 {"type": "one-shot", "chatId": "${chatId}", "text": "Your task here", "at": "2026-04-14T09:00:00+08:00"}
 EOF
 \`\`\`
+Or check whether the file already exists before creating it.
 
 ### Managing Events
 - List: \`ls ${workspacePath}/events/\`
 - View: \`cat ${workspacePath}/events/foo.json\`
-- Cancel: \`rm ${workspacePath}/events/foo.json\`
+- Delete/cancel: \`rm ${workspacePath}/events/foo.json\`
 
 ### When an Event Triggers
 You receive a message like:
 \`[EVENT:my-task.json:one-shot:2026-04-14T09:00:00+08:00] Your task here\`
-For periodic events with nothing to report, respond with just \`[SILENT]\` to avoid unnecessary messages.
+Immediate and one-shot events auto-delete after triggering. Periodic events persist until you delete them.
+
+### Silent Completion
+For periodic events where there is nothing to report, respond with just \`[SILENT]\` (and nothing else). This suppresses the Telegram message and avoids spam when a periodic check finds nothing actionable.
+
+### Debouncing
+When writing programs that create immediate events (email watchers, webhook handlers, sync jobs, and similar), always debounce. If 50 items arrive in a minute, do not create 50 immediate events. Instead collect activity over a window and create one immediate event summarizing what happened, or create a single "new activity, go check" event. If appropriate, prefer a periodic event that checks every N minutes instead of many immediate events.
+
+### Limits
+At most 5 events can be queued per chat. Do not create excessive immediate or periodic events.
 
 ## Memory
 Write to MEMORY.md files to persist context across conversations.

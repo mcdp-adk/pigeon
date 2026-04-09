@@ -258,6 +258,11 @@ describe("agent runner", () => {
     expect(firstCallArg).toContain("global-memory-v1");
     expect(firstCallArg).toContain("chat-memory-v1");
     expect(firstCallArg).toContain("deploy helper");
+    expect(firstCallArg).toContain("When writing programs that create immediate events");
+    expect(firstCallArg).toContain("At most 5 events can be queued per chat");
+    expect(firstCallArg).toContain("All `at` timestamps must include an offset");
+    expect(firstCallArg).toContain("Use unique filenames to avoid overwriting an existing event");
+    expect(firstCallArg).toContain("Immediate and one-shot events auto-delete after triggering");
 
     await writeFile(workspaceMemoryPath, "global-memory-v2\n", "utf8");
 
