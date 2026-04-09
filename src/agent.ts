@@ -305,10 +305,11 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
         let promptError: unknown;
         try {
           await session.prompt(formatPrompt(input));
-          // Wait for overflow recovery (compaction + retry) if in progress.
-          // SDK emits auto_compaction_start synchronously before session.prompt() returns,
-          // but the actual compaction + agent.continue() runs asynchronously.
-          // We resolve overflowRecovery when a new message_end arrives or compaction ends without retry.
+          // SDK processes agent_end asynchronously on its event queue after
+          // session.prompt() returns. Yield a macrotask so the SDK's chained
+          // microtasks (message_end → agent_end → _checkCompaction → emit
+          // auto_compaction_start) complete before we check for overflow.
+          await new Promise(resolve => setTimeout(resolve, 0));
           if (runState.overflowRecovery) {
             await runState.overflowRecovery.promise;
           }

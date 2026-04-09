@@ -360,10 +360,14 @@ describe("agent runner", () => {
     setupFakeSession(fake);
 
     fake.session.prompt.mockImplementationOnce(async () => {
-      fake.emit({ type: "auto_compaction_start", reason: "overflow" });
-      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
-      fake.session.messages.push(assistant);
-      fake.emit({ type: "message_end", message: assistant });
+      // Real SDK timing: events arrive after prompt resolves
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
+        fake.session.messages.push(assistant);
+        fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: false });
+        fake.emit({ type: "message_end", message: assistant });
+      }, 0);
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -372,7 +376,7 @@ describe("agent runner", () => {
     const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
 
     const events: Array<{ type: string; reason?: string }> = [];
-    await runner.run({
+    const result = await runner.run({
       chatId: Number(chatId),
       ts: "1700000010000",
       userText: "overflow test",
@@ -385,6 +389,7 @@ describe("agent runner", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toEqual({ type: "compaction_start", reason: "overflow" });
+    expect(result.reply).toBe("ok");
   });
 
   it("waits for overflow recovery before completing run", async () => {
@@ -395,11 +400,12 @@ describe("agent runner", () => {
     const fake = createFakeSession();
     setupFakeSession(fake);
 
+    // Real SDK timing: prompt() returns first, then agent_end is processed
+    // asynchronously on the event queue, which triggers auto_compaction_start.
     fake.session.prompt.mockImplementationOnce(async () => {
-      // Simulate SDK: auto_compaction_start fires synchronously before prompt() returns,
-      // but the actual recovery (compaction + agent.continue) completes asynchronously.
-      fake.emit({ type: "auto_compaction_start", reason: "overflow" });
-      // prompt() returns here — recovery still in progress
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+      }, 0);
     });
 
     const { getOrCreateRunner } = await import("../src/agent.js");
@@ -418,14 +424,12 @@ describe("agent runner", () => {
     let settled = false;
     void runPromise.then(() => { settled = true; });
 
-    // Let microtasks flush — run should NOT be settled yet (waiting for overflow recovery)
     await new Promise(r => setTimeout(r, 50));
     expect(settled).toBe(false);
 
-    // Simulate recovery complete: compaction ends with willRetry=true, then agent.continue() produces a new message
     fake.emit({ type: "auto_compaction_end", result: {}, aborted: false, willRetry: true });
     await new Promise(r => setTimeout(r, 10));
-    expect(settled).toBe(false); // still waiting — willRetry means a new message_end is expected
+    expect(settled).toBe(false);
 
     const assistant = { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" };
     fake.session.messages.push(assistant);
@@ -506,5 +510,80 @@ describe("agent runner", () => {
     fake.emit({ type: "auto_compaction_start", reason: "threshold" });
 
     expect(events).toHaveLength(0);
+  });
+
+  it("completes run when overflow compaction fails (willRetry=false)", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-compact-fail-"));
+    const chatId = "84";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      setTimeout(() => {
+        fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+        fake.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false,
+          errorMessage: "Context overflow recovery failed" });
+      }, 0);
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000014000",
+      userText: "compact fail test",
+    }, store);
+
+    expect(result.stopReason).toBeDefined();
+  });
+
+  it("does not leak overflow state across runs", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-cross-run-"));
+    const chatId = "85";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    // Run 1: normal
+    fake.session.prompt.mockImplementationOnce(async () => {
+      const assistant = { role: "assistant", content: [{ type: "text", text: "first" }], stopReason: "stop" };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000015000",
+      userText: "run 1",
+    }, store);
+
+    // Late event from run 1 arrives between runs
+    fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+
+    // Run 2: should not be blocked by stale overflow
+    fake.session.prompt.mockImplementationOnce(async () => {
+      const assistant = { role: "assistant", content: [{ type: "text", text: "second" }], stopReason: "stop" };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    const result = await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000016000",
+      userText: "run 2",
+    }, store);
+
+    expect(result.reply).toBe("second");
   });
 });
