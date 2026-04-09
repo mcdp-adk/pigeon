@@ -350,4 +350,112 @@ describe("agent runner", () => {
     expect(mocks.Socks5ProxyAgent).toHaveBeenCalledWith("socks5://127.0.0.1:7890");
     expect(mocks.setGlobalDispatcher).toHaveBeenCalled();
   });
+
+  it("surfaces overflow compaction as compaction_start event", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-compact-"));
+    const chatId = "80";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      fake.emit({ type: "auto_compaction_start", reason: "overflow" });
+      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: Array<{ type: string; reason?: string }> = [];
+    await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000010000",
+      userText: "overflow test",
+      onEvent: async (event) => {
+        if (event.type === "compaction_start") {
+          events.push({ type: event.type, reason: event.reason });
+        }
+      },
+    }, store);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: "compaction_start", reason: "overflow" });
+  });
+
+  it("surfaces auto_retry_start as retry event", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-retry-"));
+    const chatId = "81";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      fake.emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: "overloaded" });
+      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: Array<{ type: string; attempt?: number; maxAttempts?: number }> = [];
+    await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000011000",
+      userText: "retry test",
+      onEvent: async (event) => {
+        if (event.type === "retry") {
+          events.push({ type: event.type, attempt: event.attempt, maxAttempts: event.maxAttempts });
+        }
+      },
+    }, store);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: "retry", attempt: 1, maxAttempts: 3 });
+  });
+
+  it("does not surface threshold compaction after run completes", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-threshold-"));
+    const chatId = "82";
+    const dataDir = join(sandboxDir, "data");
+    const chatDir = join(dataDir, `chat-${chatId}`);
+    const fake = createFakeSession();
+    setupFakeSession(fake);
+
+    fake.session.prompt.mockImplementationOnce(async () => {
+      const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" };
+      fake.session.messages.push(assistant);
+      fake.emit({ type: "message_end", message: assistant });
+    });
+
+    const { getOrCreateRunner } = await import("../src/agent.js");
+    const { ChatStore } = await import("../src/store.js");
+    const store = new ChatStore({ workingDir: dataDir });
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+
+    const events: Array<{ type: string }> = [];
+    await runner.run({
+      chatId: Number(chatId),
+      ts: "1700000012000",
+      userText: "threshold test",
+      onEvent: async (event) => {
+        if (event.type === "compaction_start") {
+          events.push({ type: event.type });
+        }
+      },
+    }, store);
+
+    fake.emit({ type: "auto_compaction_start", reason: "threshold" });
+
+    expect(events).toHaveLength(0);
+  });
 });
