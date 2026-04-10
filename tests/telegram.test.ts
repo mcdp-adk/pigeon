@@ -392,14 +392,14 @@ describe("start", () => {
 
     expect(formatStartReply(message, "pigeon-bot", true, { explicitOnly: true })).toBe(
       [
-        "<b>基础信息</b>",
+        "<b>🐦 基础信息</b>",
         "- 宿主：<code>Pigeon</code>",
         "- Bot：<code>pigeon-bot</code>",
         "- Chat ID：<code>1001</code>",
         "- Topic：当前消息不在 topic 中",
         "- 命令：<code>/help</code> 查看可用命令，<code>/stop</code> 停止当前任务",
         "",
-        "<b>当前状态</b>",
+        "<b>ℹ️ 当前状态</b>",
         "- 当前 chat 已完成配置并启用",
         "- Chat 类型：<code>private</code>",
         "- 响应模式：仅响应命令 / @提及 / 回复",
@@ -411,25 +411,25 @@ describe("start", () => {
 
   it("formats /start reply for unauthorized chats", () => {
     const message = mergeMessage({
-      chat: { id: 2097986184, type: "private" },
+  chat: { id: 5550199901, type: "private" },
       text: "/start",
       entities: [{ type: "bot_command", offset: 0, length: 6 }]
     });
 
     expect(formatStartReply(message, "pigeon-bot", false, { explicitOnly: true })).toBe(
       [
-        "<b>基础信息</b>",
+        "<b>🐦 基础信息</b>",
         "- 宿主：<code>Pigeon</code>",
         "- Bot：<code>pigeon-bot</code>",
-        "- Chat ID：<code>2097986184</code>",
+  "- Chat ID：<code>5550199901</code>",
         "- Topic：当前消息不在 topic 中",
         "- 命令：<code>/help</code> 查看可用命令，<code>/stop</code> 停止当前任务",
         "",
-        "<b>配置指引</b>",
+        "<b>🔒 配置指引</b>",
         "- 当前 chat 尚未加入允许列表",
         "- 配置作用域按 chat 生效，topic 不单独配置",
         "- 请在 <code>settings.json</code> 的 <code>allowed_chats</code> 中添加下面这一行映射：",
-        `<pre>"2097986184": {}</pre>`,
+  `<pre>"5550199901": {}</pre>`,
         "- 完成配置后重新发送 <code>/start</code> 即可看到启用状态"
       ].join("\n")
     );
@@ -440,13 +440,13 @@ describe("start", () => {
 
     const reply = formatStartReply(message, "pigeon-bot", false, { explicitOnly: true });
     const payloadIndex = reply.indexOf("- Start Payload：<code>ticket-42</code>");
-    const guidanceIndex = reply.indexOf("<b>配置指引</b>");
+    const guidanceIndex = reply.indexOf("<b>🔒 配置指引</b>");
 
     expect(reply).toContain("- Start Payload：<code>ticket-42</code>");
-    expect(reply).toContain("<b>基础信息</b>");
-    expect(reply).toContain("<b>配置指引</b>");
-    expect(reply.match(/<b>基础信息<\/b>/g)).toHaveLength(1);
-    expect(reply.match(/<b>配置指引<\/b>/g)).toHaveLength(1);
+    expect(reply).toContain("<b>🐦 基础信息</b>");
+    expect(reply).toContain("<b>🔒 配置指引</b>");
+    expect(reply.match(/<b>🐦 基础信息<\/b>/g)).toHaveLength(1);
+    expect(reply.match(/<b>🔒 配置指引<\/b>/g)).toHaveLength(1);
     expect(payloadIndex).toBeGreaterThan(-1);
     expect(guidanceIndex).toBeGreaterThan(-1);
     expect(payloadIndex).toBeLessThan(guidanceIndex);
@@ -465,10 +465,10 @@ describe("start", () => {
 
   it("formats /start with shared base section regardless of authorization", () => {
     const authorized = formatStartReply(mergeMessage({ text: "/start", entities: [{ type: "bot_command", offset: 0, length: 6 }] }), "pigeon-bot", true, { explicitOnly: true });
-    const unauthorized = formatStartReply(mergeMessage({ chat: { id: 2097986184, type: "private" }, text: "/start", entities: [{ type: "bot_command", offset: 0, length: 6 }] }), "pigeon-bot", false, { explicitOnly: true });
+  const unauthorized = formatStartReply(mergeMessage({ chat: { id: 5550199901, type: "private" }, text: "/start", entities: [{ type: "bot_command", offset: 0, length: 6 }] }), "pigeon-bot", false, { explicitOnly: true });
 
     for (const reply of [authorized, unauthorized]) {
-      expect(reply).toContain("<b>基础信息</b>");
+      expect(reply).toContain("<b>🐦 基础信息</b>");
       expect(reply).toContain("- 宿主：<code>Pigeon</code>");
       expect(reply).toContain("- Bot：<code>pigeon-bot</code>");
       expect(reply).toContain("- Topic：当前消息不在 topic 中");
@@ -496,14 +496,14 @@ describe("start", () => {
       { explicitOnly: false }
     );
     const payloadIndex = reply.indexOf("- Start Payload：<code>ticket-42</code>");
-    const statusIndex = reply.indexOf("<b>当前状态</b>");
+    const statusIndex = reply.indexOf("<b>ℹ️ 当前状态</b>");
 
-    expect(reply).toContain("<b>基础信息</b>");
-    expect(reply).toContain("<b>当前状态</b>");
+    expect(reply).toContain("<b>🐦 基础信息</b>");
+    expect(reply).toContain("<b>ℹ️ 当前状态</b>");
     expect(reply).toContain("- Start Payload：<code>ticket-42</code>");
     expect(reply).toContain("- 响应模式：响应该 chat 中的所有消息");
-    expect(reply.match(/<b>基础信息<\/b>/g)).toHaveLength(1);
-    expect(reply.match(/<b>当前状态<\/b>/g)).toHaveLength(1);
+    expect(reply.match(/<b>🐦 基础信息<\/b>/g)).toHaveLength(1);
+    expect(reply.match(/<b>ℹ️ 当前状态<\/b>/g)).toHaveLength(1);
     expect(payloadIndex).toBeGreaterThan(-1);
     expect(statusIndex).toBeGreaterThan(-1);
     expect(payloadIndex).toBeLessThan(statusIndex);

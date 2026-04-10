@@ -565,7 +565,7 @@ function buildSystemPrompt(
 - Bash working directory: ${chatWorkspaceDir}
 - Be careful with system modifications`;
 
-  return `You are Pigeon, a Telegram assistant. Be concise. No emojis.
+  return `You are Pigeon, a Telegram assistant. Be concise.
 
 ## Context
 - For current date/time, use: date
@@ -584,7 +584,7 @@ Tag usage:
 - <blockquote>text</blockquote>: quoted content, supplementary notes
 
 Forbidden: <i> <em> <u> <s> and any other tags.
-Use \n for line breaks (not <br>). Use "- " or "• " for list items.
+Use \n for line breaks (not <br>). Use "- " for list items.
 Keep responses under 4096 characters. For long output, summarize inline or offer to write to a file.
 
 ## Environment

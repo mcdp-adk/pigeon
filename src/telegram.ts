@@ -595,7 +595,7 @@ export const formatStartReply = (
 ): TelegramReply => {
   const command = extractCommand(message);
   const lines = [
-    "<b>基础信息</b>",
+    "<b>🐦 基础信息</b>",
     "- 宿主：<code>Pigeon</code>",
     `- Bot：<code>${escapeHtml(botName)}</code>`,
     `- Chat ID：<code>${escapeHtml(String(message.chat.id))}</code>`,
@@ -610,7 +610,7 @@ export const formatStartReply = (
   if (isAuthorized) {
     lines.push(
       "",
-      "<b>当前状态</b>",
+      "<b>ℹ️ 当前状态</b>",
       "- 当前 chat 已完成配置并启用",
       `- Chat 类型：<code>${escapeHtml(message.chat.type)}</code>`,
       `- 响应模式：${options?.explicitOnly ? "仅响应命令 / @提及 / 回复" : "响应该 chat 中的所有消息"}`,
@@ -620,7 +620,7 @@ export const formatStartReply = (
   } else {
     lines.push(
       "",
-      "<b>配置指引</b>",
+      "<b>🔒 配置指引</b>",
       "- 当前 chat 尚未加入允许列表",
       "- 配置作用域按 chat 生效，topic 不单独配置",
       "- 请在 <code>settings.json</code> 的 <code>allowed_chats</code> 中添加下面这一行映射：",

@@ -386,7 +386,7 @@ describe("main startup", () => {
     );
       const reply = ctx.reply.mock.calls[0]?.[0] as string;
       expect(reply).toContain("- Start Payload：<code>ticket-42</code>");
-      expect(reply.indexOf("- Start Payload：<code>ticket-42</code>")).toBeLessThan(reply.indexOf("<b>配置指引</b>"));
+      expect(reply.indexOf("- Start Payload：<code>ticket-42</code>")).toBeLessThan(reply.indexOf("<b>🔒 配置指引</b>"));
     } finally {
       restore();
     }
