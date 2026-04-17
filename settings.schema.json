@@ -67,6 +67,10 @@
           "type": "string",
           "minLength": 1,
           "description": "AI model identifier"
+        },
+        "auth_path": {
+          "type": "string",
+          "description": "Optional override for the credential file path (default: ~/.pi/pigeon/auth.json). Supports leading ~."
         }
       }
     },

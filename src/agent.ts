@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import type { AssistantMessage, AssistantMessageEvent } from "@mariozechner/pi-ai";
-import { getEnvApiKey, getModel } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getGlobalDispatcher, ProxyAgent, setGlobalDispatcher, Socks5ProxyAgent } from "undici";
 import {
   AgentSession,
+  type AuthStorage,
   convertToLlm,
   createExtensionRuntime,
   formatSkillsForPrompt,
@@ -17,6 +18,7 @@ import {
   SessionManager
 } from "@mariozechner/pi-coding-agent";
 
+import { createAuthStorage, isOAuthProvider } from "./auth.js";
 import { createPigeonSettingsManager, syncLogToSessionManager } from "./context.js";
 import { logWarning } from "./log.js";
 import { createExecutor, parseSandboxArg, type ExecOptions, type ExecResult, type Executor } from "./sandbox.js";
@@ -116,16 +118,26 @@ export function addSyntheticActiveRunnerForTests(chatId: string): { deactivate: 
   return { deactivate: () => chatRunners.delete(String(chatId)) };
 }
 
-export function getOrCreateRunner(settings: Settings, chatId: string, chatDir: string): AgentRunner {
+export function getOrCreateRunner(
+  settings: Settings,
+  chatId: string,
+  chatDir: string,
+  authStorage: AuthStorage = createAuthStorage(settings.ai.auth_path)
+): AgentRunner {
   const existing = chatRunners.get(chatId);
   if (existing) return existing;
 
-  const runner = createRunner(settings, chatId, chatDir);
+  const runner = createRunner(settings, chatId, chatDir, authStorage);
   chatRunners.set(chatId, runner);
   return runner;
 }
 
-function createRunner(settings: Settings, chatId: string, chatDir: string): AgentRunner {
+function createRunner(
+  settings: Settings,
+  chatId: string,
+  chatDir: string,
+  authStorage: AuthStorage
+): AgentRunner {
   mkdirSync(chatDir, { recursive: true });
   installAiProxyDispatcher(settings.ai.proxy);
 
@@ -136,7 +148,6 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
   const tools = createPigeonTools(scopedExecutor);
 
   const contextFile = join(chatDir, "context.jsonl");
-  // mom pattern: always open, SessionManager handles missing file gracefully
   const sessionManager = SessionManager.open(contextFile, chatDir);
   const settingsManager = createPigeonSettingsManager(dirname(chatDir));
 
@@ -148,9 +159,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     throw new Error(`Unsupported model: ${settings.ai.provider}/${settings.ai.model}`);
   }
 
-  const modelRegistry = new ModelRegistry(
-    createEnvOnlyAuthBackend() as unknown as ConstructorParameters<typeof ModelRegistry>[0]
-  );
+  const modelRegistry = new ModelRegistry(authStorage);
 
   // Build initial system prompt
   let systemPrompt = buildSystemPrompt(
@@ -161,7 +170,6 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
     loadPigeonSkills(chatDir, chatWorkspaceDir)
   );
 
-  // mom pattern: new Agent + new AgentSession (synchronous, ready immediately)
   const agent = new Agent({
     initialState: {
       systemPrompt,
@@ -170,11 +178,7 @@ function createRunner(settings: Settings, chatId: string, chatDir: string): Agen
       tools,
     },
     convertToLlm,
-    getApiKey: async (provider: string) => {
-      const key = getEnvApiKey(provider);
-      if (!key) throw new Error(`No API key for provider: ${provider}`);
-      return key;
-    },
+    getApiKey: createApiKeyResolver(authStorage),
   });
 
   // Load existing messages from context.jsonl (for restart continuity)
@@ -413,27 +417,20 @@ function fireOnEvent(
   runState.pendingEventTasks.add(task);
 }
 
-function createEnvOnlyAuthBackend() {
-  let fallbackResolver: ((provider: string) => string | undefined) | undefined;
+export const createApiKeyResolver = (
+  authStorage: AuthStorage
+) => async (provider: string): Promise<string> => {
+  authStorage.reload();
+  const key = await authStorage.getApiKey(provider);
+  if (key) return key;
 
-  return {
-    setFallbackResolver(resolver: (provider: string) => string | undefined): void {
-      fallbackResolver = resolver;
-    },
-    getOAuthProviders(): [] {
-      return [];
-    },
-    get(_provider: string): undefined {
-      return undefined;
-    },
-    hasAuth(provider: string): boolean {
-      return getEnvApiKey(provider) !== undefined || fallbackResolver?.(provider) !== undefined;
-    },
-    async getApiKey(provider: string): Promise<string | undefined> {
-      return getEnvApiKey(provider) ?? fallbackResolver?.(provider);
-    }
-  };
-}
+  const hints = [
+    isOAuthProvider(authStorage, provider) ? `"npm run login ${provider}" (OAuth)` : undefined,
+    `"npm run auth:set ${provider}" (API key)`,
+    "set the provider's env var"
+  ].filter(Boolean).join(", or ");
+  throw new Error(`No credentials for provider "${provider}". Run ${hints}.`);
+};
 
 function resolveChatWorkspaceDir(baseExecutor: Executor, chatDir: string): string {
   const workspaceParent = baseExecutor.getWorkspacePath(dirname(chatDir));

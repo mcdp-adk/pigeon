@@ -58,7 +58,7 @@ describe("settings", () => {
           "-1002": { explicit_only: false }
         }
       },
-      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini", auth_path: "" },
       sandbox: "host"
     });
   });
@@ -85,8 +85,20 @@ describe("settings", () => {
           "-1001": {}
         }
       },
-      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini", auth_path: "" },
       sandbox: "docker:default"
+    });
+  });
+
+  it("parses ai.auth_path when provided", async () => {
+    await writeSettingsJson({
+      telegram: { proxy: "", explicit_only: true, allowed_chats: {} },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini", auth_path: "~/.pi/custom.json" },
+      sandbox: "host"
+    });
+
+    await expect(loadSettings()).resolves.toMatchObject({
+      ai: { auth_path: "~/.pi/custom.json" }
     });
   });
 
@@ -138,7 +150,7 @@ describe("settings", () => {
         explicit_only: true,
         allowed_chats: {}
       },
-      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini", auth_path: "" },
       sandbox: "host"
     });
     expect(process.env.TELEGRAM_BOT_TOKEN).toBe("from-dotenv");
@@ -168,7 +180,8 @@ describe("settings", () => {
       ai: {
         proxy: "socks5://127.0.0.1:7890",
         provider: "openrouter",
-        model: "openai/gpt-5.4-mini"
+        model: "openai/gpt-5.4-mini",
+        auth_path: ""
       },
       sandbox: "host"
     });
@@ -248,7 +261,7 @@ describe("settings", () => {
           "-1002": { explicit_only: false }
         }
       },
-      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini" },
+      ai: { proxy: "", provider: "openai", model: "gpt-4o-mini", auth_path: "" },
       sandbox: "host"
     };
 

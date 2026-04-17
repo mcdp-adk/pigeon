@@ -96,9 +96,14 @@ vi.mock("@mariozechner/pi-coding-agent", async (importActual) => {
 
 const createSettings = () => ({
   telegram: { proxy: "", explicit_only: false, allowed_chats: {} },
-  ai: { proxy: "", provider: "anthropic", model: "claude-sonnet-4-5" },
+  ai: { proxy: "", provider: "anthropic", model: "claude-sonnet-4-5", auth_path: "" },
   sandbox: "host",
 });
+
+const createTestAuthStorage = async () => {
+  const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+  return AuthStorage.inMemory({ anthropic: { type: "api_key", key: "test-key" } });
+};
 
 describe("agent runner", () => {
   let sandboxDir = "";
@@ -125,6 +130,88 @@ describe("agent runner", () => {
     mocks.AgentSession.mockImplementation(function () { return fake.session; });
   };
 
+  it("createApiKeyResolver returns a stored key and always reloads first (no stale cache)", async () => {
+    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+    const authStorage = AuthStorage.inMemory({ anthropic: { type: "api_key", key: "from-start" } });
+    const reloadSpy = vi.spyOn(authStorage, "reload");
+
+    const { createApiKeyResolver } = await import("../src/agent.js");
+    const resolver = createApiKeyResolver(authStorage);
+    await expect(resolver("anthropic")).resolves.toBe("from-start");
+    await expect(resolver("anthropic")).resolves.toBe("from-start");
+    expect(reloadSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("createApiKeyResolver sees externally-added credentials (reload on every call)", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-auth-add-"));
+    const authPath = join(sandboxDir, "auth.json");
+
+    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+    const reader = AuthStorage.create(authPath);
+
+    const { createApiKeyResolver } = await import("../src/agent.js");
+    const resolver = createApiKeyResolver(reader);
+
+    await expect(resolver("anthropic")).rejects.toThrow(/No credentials/);
+
+    const writer = AuthStorage.create(authPath);
+    writer.set("anthropic", { type: "api_key", key: "added-externally" });
+
+    await expect(resolver("anthropic")).resolves.toBe("added-externally");
+  });
+
+  it("createApiKeyResolver sees externally-overwritten credentials (no stale cache)", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-auth-overwrite-"));
+    const authPath = join(sandboxDir, "auth.json");
+
+    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+    const reader = AuthStorage.create(authPath);
+    reader.set("anthropic", { type: "api_key", key: "original" });
+
+    const { createApiKeyResolver } = await import("../src/agent.js");
+    const resolver = createApiKeyResolver(reader);
+
+    await expect(resolver("anthropic")).resolves.toBe("original");
+
+    const writer = AuthStorage.create(authPath);
+    writer.set("anthropic", { type: "api_key", key: "rotated" });
+
+    await expect(resolver("anthropic")).resolves.toBe("rotated");
+  });
+
+  it("createApiKeyResolver sees externally-removed credentials immediately", async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), "agent-auth-remove-"));
+    const authPath = join(sandboxDir, "auth.json");
+
+    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+    const reader = AuthStorage.create(authPath);
+    reader.set("anthropic", { type: "api_key", key: "will-be-removed" });
+
+    const { createApiKeyResolver } = await import("../src/agent.js");
+    const resolver = createApiKeyResolver(reader);
+
+    await expect(resolver("anthropic")).resolves.toBe("will-be-removed");
+
+    const writer = AuthStorage.create(authPath);
+    writer.remove("anthropic");
+
+    await expect(resolver("anthropic")).rejects.toThrow(/No credentials/);
+  });
+
+  it("createApiKeyResolver error suggests login ONLY for OAuth-capable providers", async () => {
+    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+    const authStorage = AuthStorage.inMemory();
+    const { createApiKeyResolver } = await import("../src/agent.js");
+    const resolver = createApiKeyResolver(authStorage);
+
+    await expect(resolver("anthropic")).rejects.toThrow(/npm run login anthropic/);
+    const mistralErr = await resolver("mistral").then(() => null, (e) => e as Error);
+    expect(mistralErr?.message).toBeDefined();
+    expect(mistralErr!.message).not.toMatch(/npm run login mistral/);
+    expect(mistralErr!.message).toMatch(/npm run auth:set mistral/);
+    expect(mistralErr!.message).toMatch(/env var/);
+  });
+
   it("reuses the same runner for one chat", async () => {
     const fake = createFakeSession();
     setupFakeSession(fake);
@@ -133,9 +220,10 @@ describe("agent runner", () => {
     const settings = createSettings();
     const chatId = `reuse-${Date.now()}`;
     const chatDir = join(tmpdir(), "pigeon-reuse", `chat-${chatId}`);
+    const authStorage = await createTestAuthStorage();
 
-    const first = getOrCreateRunner(settings, chatId, chatDir);
-    const second = getOrCreateRunner(settings, chatId, chatDir);
+    const first = getOrCreateRunner(settings, chatId, chatDir, authStorage);
+    const second = getOrCreateRunner(settings, chatId, chatDir, authStorage);
     expect(first).toBe(second);
   });
 
@@ -156,7 +244,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -208,7 +297,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const runPromise = runner.run({
       chatId: Number(chatId),
@@ -250,7 +340,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     await runner.run({ chatId: Number(chatId), ts: "1700000002000", user: "u3", userName: "alice", userText: "first" }, store);
 
@@ -290,7 +381,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     let seenDelta = false;
     let resolveEventHandler: (() => void) | undefined;
@@ -344,10 +436,12 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
+    const authStorage = await createTestAuthStorage();
     const runner = getOrCreateRunner(
-      { ...createSettings(), ai: { proxy: "socks5://127.0.0.1:7890", provider: "anthropic", model: "claude-sonnet-4-5" } },
+      { ...createSettings(), ai: { proxy: "socks5://127.0.0.1:7890", provider: "anthropic", model: "claude-sonnet-4-5", auth_path: "" } },
       chatId,
       chatDir,
+      authStorage,
     );
 
     await runner.run({ chatId: Number(chatId), ts: "1700000006000", userText: "ping" }, store);
@@ -378,7 +472,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: Array<{ type: string; reason?: string }> = [];
     const result = await runner.run({
@@ -416,7 +511,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: string[] = [];
     const runPromise = runner.run({
@@ -463,7 +559,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: Array<{ type: string; attempt?: number; maxAttempts?: number }> = [];
     await runner.run({
@@ -498,7 +595,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: Array<{ type: string }> = [];
     await runner.run({
@@ -536,7 +634,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -565,7 +664,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     await runner.run({
       chatId: Number(chatId),
@@ -615,7 +715,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: string[] = [];
     const runPromise = runner.run({
@@ -667,7 +768,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -701,7 +803,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -740,7 +843,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -781,7 +885,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const result = await runner.run({
       chatId: Number(chatId),
@@ -815,7 +920,8 @@ describe("agent runner", () => {
     const { getOrCreateRunner } = await import("../src/agent.js");
     const { ChatStore } = await import("../src/store.js");
     const store = new ChatStore({ workingDir: dataDir });
-    const runner = getOrCreateRunner(createSettings(), chatId, chatDir);
+    const authStorage = await createTestAuthStorage();
+    const runner = getOrCreateRunner(createSettings(), chatId, chatDir, authStorage);
 
     const events: string[] = [];
     const result = await runner.run({

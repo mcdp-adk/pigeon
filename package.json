@@ -5,6 +5,12 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx --watch src/main.ts",
+    "login": "tsx src/login.ts login",
+    "logout": "tsx src/login.ts logout",
+    "auth:status": "tsx src/login.ts status",
+    "auth:set": "tsx src/login.ts set",
+    "auth:remove": "tsx src/login.ts remove",
+    "models": "tsx src/login.ts models",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

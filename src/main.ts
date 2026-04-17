@@ -2,11 +2,13 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import type { AuthStorage } from "@mariozechner/pi-coding-agent";
 import { Bot, type Context } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 
 import { getOrCreateRunner, type AgentRunner, type AgentRunEvent } from "./agent.js";
+import { createAuthStorage } from "./auth.js";
 import { createEventsWatcher } from "./events.js";
 import { logError, logInfo, logWarning } from "./log.js";
 import { getChatPolicy, loadSettings, type Settings } from "./settings.js";
@@ -144,7 +146,11 @@ const isSystemCommandName = (value: string | undefined): value is SystemCommandN
   return SYSTEM_COMMANDS.some((command) => command.command === value);
 };
 
-const getOrCreateChatState = (chatId: number, settings: Settings): ChatState => {
+const getOrCreateChatState = (
+  chatId: number,
+  settings: Settings,
+  authStorage: AuthStorage
+): ChatState => {
   const chatKey = String(chatId);
   const existing = chatStates.get(chatKey);
   if (existing) {
@@ -156,7 +162,7 @@ const getOrCreateChatState = (chatId: number, settings: Settings): ChatState => 
   const state: ChatState = {
     running: false,
     stopRequested: false,
-    runner: getOrCreateRunner(settings, chatKey, chatDir),
+    runner: getOrCreateRunner(settings, chatKey, chatDir, authStorage),
     store,
     responseCtx: undefined,
     eventQueue: new EventQueue()
@@ -187,8 +193,9 @@ async function dispatchSystemCommand(params: {
   ctx: Context;
   botName: string;
   settings: Settings;
+  authStorage: AuthStorage;
 }): Promise<boolean> {
-  const { commandName, message, ctx, botName, settings } = params;
+  const { commandName, message, ctx, botName, settings, authStorage } = params;
   if (!isSystemCommandName(commandName)) {
     return false;
   }
@@ -207,7 +214,7 @@ async function dispatchSystemCommand(params: {
   }
 
   if (commandName === "stop") {
-    const state = getOrCreateChatState(message.chat.id, settings);
+    const state = getOrCreateChatState(message.chat.id, settings, authStorage);
     if (!state.running) {
       await ctx.reply(STOP_IDLE_REPLY, { parse_mode: "HTML" });
       logInfo("Handled command", {
@@ -263,6 +270,7 @@ export const startTelegramHost = async () => {
     throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
   }
   const proxyConfig = createProxyConfig(settings.telegram.proxy);
+  const authStorage = createAuthStorage(settings.ai.auth_path);
 
   logInfo("Initializing Telegram host", {
     explicit_only: settings.telegram.explicit_only,
@@ -303,7 +311,7 @@ export const startTelegramHost = async () => {
     const message = ctx.message;
     const command = extractCommandForBot(message, botInfo.username);
 
-    if (await dispatchSystemCommand({ commandName: command.commandName, message, ctx, botName, settings })) {
+    if (await dispatchSystemCommand({ commandName: command.commandName, message, ctx, botName, settings, authStorage })) {
       return;
     }
 
@@ -344,7 +352,7 @@ export const startTelegramHost = async () => {
       return;
     }
 
-    const state = getOrCreateChatState(message.chat.id, settings);
+    const state = getOrCreateChatState(message.chat.id, settings, authStorage);
     if (state.running) {
       await ctx.reply(BUSY_REPLY, { parse_mode: "HTML" });
       logInfo("Handled message", {
@@ -465,7 +473,7 @@ export const startTelegramHost = async () => {
       return;
     }
 
-    const state = getOrCreateChatState(Number(chatId), settings);
+    const state = getOrCreateChatState(Number(chatId), settings, authStorage);
     const enqueued = state.eventQueue.enqueue(() => runEventForChat(state, chatId, text));
     if (!enqueued) {
       logWarning("Event queue full, discarding", { chat_id: chatId });

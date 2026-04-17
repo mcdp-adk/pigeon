@@ -13,6 +13,7 @@ export interface AiSettings {
   proxy: string;
   provider: string;
   model: string;
+  auth_path: string;
 }
 
 export interface ChatSettings {
@@ -73,13 +74,8 @@ function assertPlainObject(value: unknown, path: string): asserts value is Recor
   }
 }
 
-export const loadSettings = async (): Promise<Settings> => {
+export const loadSettingsFile = async (): Promise<Settings> => {
   loadDotenv({ path: resolve(process.cwd(), ".env") });
-
-  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!telegramToken || telegramToken.trim() === "") {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
-  }
 
   const settingsPath = resolve(process.cwd(), SETTINGS_FILENAME);
 
@@ -118,6 +114,7 @@ export const loadSettings = async (): Promise<Settings> => {
   const aiProxy = parseOptionalString(aiRaw.proxy, "ai.proxy");
   const provider = parseRequiredString(aiRaw.provider, "ai.provider");
   const model = parseRequiredString(aiRaw.model, "ai.model");
+  const authPath = parseOptionalString(aiRaw.auth_path, "ai.auth_path");
 
   const sandboxRaw = root.sandbox;
   const sandbox = parseRequiredString(sandboxRaw, "sandbox");
@@ -162,10 +159,20 @@ export const loadSettings = async (): Promise<Settings> => {
     ai: {
       proxy: aiProxy,
       provider,
-      model
+      model,
+      auth_path: authPath
     },
     sandbox
   };
+};
+
+export const loadSettings = async (): Promise<Settings> => {
+  const settings = await loadSettingsFile();
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!telegramToken || telegramToken.trim() === "") {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
+  }
+  return settings;
 };
 
 export const getChatPolicy = (chatId: string | number | bigint, settings: Settings): ChatPolicy => {

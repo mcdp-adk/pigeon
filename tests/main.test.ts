@@ -951,7 +951,8 @@ describe("main startup", () => {
       expect(mocks.getOrCreateRunner).toHaveBeenCalledWith(
         expect.any(Object),
         "1001",
-        `${process.cwd()}/data/chat-1001`
+        `${process.cwd()}/data/chat-1001`,
+        expect.any(Object)
       );
       expect(mocks.storeInstances[0]?.workingDir).toBe(`${process.cwd()}/data`);
     } finally {
